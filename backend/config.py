@@ -28,7 +28,7 @@ LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))  # Low temperature 
 
 # SAR Narrative templates (placeholders to be filled in)
 TEMPLATES = {
-    "INTRODUCTION": """U.S. Bank National Association (USB), is filing this Suspicious Activity Report (SAR) to report {activity_type} totaling ${total_amount} {derived_from} by {subjects} in {account_type} account number {account_number}. The suspicious activity was conducted from {start_date} through {end_date}. This SAR contains an attached Comma Separated Value (CSV) file that provides additional details of the suspicious transactions being reported in this SAR.""",
+    "INTRODUCTION": """Bank National Association (USB), is filing this Suspicious Activity Report (SAR) to report {activity_type} totaling ${total_amount} {derived_from} by {subjects} in {account_type} account number {account_number}. The suspicious activity was conducted from {start_date} through {end_date}. This SAR contains an attached Comma Separated Value (CSV) file that provides additional details of the suspicious transactions being reported in this SAR.""",
     
     "PRIOR_CASES": """Prior SAR (Case Number: {prior_case_number}) was filed on {prior_filing_date} reporting similar activity.""",
     

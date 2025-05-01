@@ -1,3 +1,242 @@
+I'll modify each of the prompts to work better with Llama 3:8B, considering the constraints of the model and the variable nature of case documents. These modifications aim to make the prompts more robust, simpler in structure, and more likely to produce consistent results with smaller language models.
+
+# Modified Prompts for Llama 3:8B
+
+## 1. Modified Case Number Extraction Prompt
+
+```
+Find the case number in this document. The case number usually starts with letters like "CC", "C", or "AML" followed by numbers.
+
+Look for text patterns like:
+- "Case Number: CC0012345"
+- "Case ID: AML7890123"
+- "Case #: C4567890"
+
+Reply with ONLY the case number and nothing else - no explanation or additional text.
+```
+
+## 2. Modified Alert Information Extraction Prompt
+
+```
+Look for alert information in the document. For each alert you find:
+
+1) First, identify the Alert ID (like "AMLR5881633" or similar codes)
+2) Find the Alert Month (usually in YYYYMM format, like "202302")
+3) Find the Alert Description (usually a sentence explaining the alert)
+4) Find the Review Period dates (usually formatted as MM/DD/YYYY)
+
+For EACH alert you find, answer in this EXACT format:
+
+===ALERT===
+ID: [the alert ID]
+Month: [the alert month]
+Description: [short description]
+Review Start: [start date]
+Review End: [end date]
+===END===
+
+If you find multiple alerts, provide information for each one separately using the format above.
+```
+
+## 3. Modified Subject Information Extraction Prompt
+
+```
+Find information about all people (subjects) mentioned in the "Customer Information" section of the document.
+
+For EACH person you find, answer in this format:
+
+===SUBJECT===
+Name: [full name]
+Primary: [Yes/No/Unknown]
+Party Key: [party key if available, otherwise "Unknown"]
+Occupation: [occupation if available, otherwise "Unknown"]
+Employer: [employer if available, otherwise "Unknown"]
+Nationality: [nationality if available, otherwise "Unknown"]
+Address: [address if available, otherwise "Unknown"]
+Relationship: [relationship to account if available, otherwise "Unknown"]
+===END===
+
+List each subject separately. Focus only on extracting the information that's clearly stated in the document.
+```
+
+## 4. Modified Account Information Extraction Prompt
+
+```
+Find information about bank accounts in the "Account Information" section of the document.
+
+For EACH account you find, provide:
+
+===ACCOUNT===
+Account Number: [account number]
+Account Type: [account type (checking, savings, etc.)]
+Account Title: [name on the account]
+Open Date: [when account was opened, if available]
+Close Date: [when account was closed, if available or "Not closed"]
+Status: [account status]
+Related Parties: [people associated with account]
+Branch: [branch location if available]
+===END===
+
+List each account separately using the format above.
+```
+
+## 5. Modified Prior Cases Information Extraction Prompt
+
+```
+Look for information about prior cases or SARs (Suspicious Activity Reports) in the document.
+
+If the document states there are NO prior cases, simply reply: "No prior cases found."
+
+If prior cases ARE mentioned, for EACH prior case provide:
+
+===PRIOR CASE===
+Case Number: [case number]
+Alert IDs: [alert IDs associated with this case]
+Alert Months: [alert months associated with this case]
+Review Period: [review period dates, if available]
+SAR Form Number: [SAR form number, if available]
+Filing Date: [filing date, if available]
+Summary: [brief summary of the case]
+===END===
+
+List each prior case separately using the format above.
+```
+
+## 6. Modified Database Searches Extraction Prompt
+
+```
+Find information about database searches in the "Database Searches" section of the document.
+
+Specifically look for:
+1) KYC database results for each person
+2) Adverse media results
+
+Reply in this format:
+
+===KYC DATABASE===
+[List each person and whether KYC information was found]
+===END===
+
+===ADVERSE MEDIA===
+[Summarize adverse media findings, or state if none found]
+===END===
+
+Only include information that's clearly stated in the document.
+```
+
+## 7. Modified Transaction Extraction Prompt
+
+```
+Find transaction information for each account in the document. Look for tables or sections showing:
+- Credit transactions
+- Debit transactions
+- Transaction types
+- Total amounts
+- Date ranges
+
+For EACH account, provide:
+
+===ACCOUNT TRANSACTIONS===
+Account: [account number]
+Total Credits: [total credit amount]
+Total Debits: [total debit amount]
+Main Credit Types: [main types of credits]
+Main Debit Types: [main types of debits]
+Transaction Period: [date range of transactions]
+===END===
+
+Keep your answer concise and only include information clearly stated in the document.
+```
+
+## 8. Modified Suspicious Activity Identification Prompt
+
+```
+Based on the information in the document, identify potential suspicious activity patterns:
+
+1) Look for unusual transaction patterns
+2) Look for high-risk indicators
+3) Look for activity inconsistent with customer profile
+4) Look for structuring or other evasive behavior
+
+Answer in this format:
+
+===SUSPICIOUS ACTIVITY===
+Activity Type: [type of suspicious activity]
+Amount: [total amount involved]
+Parties: [people/entities involved]
+Time Period: [when activity occurred]
+Indicators: [list 2-3 key red flags]
+===END===
+
+Only include information that's clearly stated in the document. If no suspicious activity is clearly indicated, state "Insufficient information to determine suspicious activity patterns."
+```
+
+## 9. Modified SAR Narrative Introduction Generator
+
+```
+Create a brief introduction paragraph for a Suspicious Activity Report (SAR) based on this information:
+
+1) The financial institution is "U.S. Bank National Association (USB)"
+2) Look for the type of suspicious activity (structuring, wire fraud, etc.)
+3) Look for the total dollar amount involved
+4) Look for the names of subjects involved
+5) Look for account numbers
+6) Look for the time period of suspicious activity
+
+Write a professional, factual paragraph that begins: "U.S. Bank National Association (USB), is filing this Suspicious Activity Report (SAR) to report..."
+
+Your paragraph should be concise and include only facts clearly stated in the document.
+```
+
+## 10. Modified Comprehensive SAR Narrative Generator
+
+```
+Using the information in this document, create a complete SAR narrative with these sections:
+
+1. INTRODUCTION: Start with "U.S. Bank National Association (USB), is filing this Suspicious Activity Report (SAR) to report..." and include the suspicious activity type, amount, subject names, account numbers, and date range.
+
+2. ACCOUNT INFORMATION: Describe the accounts involved, including account types, numbers, opening dates, and status.
+
+3. SUBJECT INFORMATION: Describe the subjects involved and their relationships to the accounts.
+
+4. SUSPICIOUS ACTIVITY: Describe the suspicious activity in factual terms without speculation. Include specific examples if available.
+
+5. CONCLUSION: Summarize the suspicious activity, total amount, and date range. End with "USB will conduct a follow-up review to monitor for continuing activity. All requests for supporting documentation can be sent to lawenforcementrequests@usbank.com referencing AML case number [CASE NUMBER]."
+
+Keep your narrative professional, factual, and under 2,000 characters. Format currency as $X,XXX.XX and dates as MM/DD/YYYY.
+```
+
+## Implementation Tips for Llama 3:8B
+
+1. **Chunk the Document**: For long case documents, consider processing them in sections rather than all at once. You could first identify the relevant sections (e.g., "Customer Information," "Account Information") and then process each separately.
+
+2. **Sequential Processing**: Run the prompts in sequence, using the output from earlier prompts to inform later ones. For example, use the extracted case number in the final SAR narrative.
+
+3. **Simplified Formats**: These prompts use simple, clear formats with clear section markers (===) that should be easier for smaller models to maintain consistently.
+
+4. **Verification Steps**: Add verification steps where the model checks its output against expected patterns (e.g., ensuring a case number matches a specific format).
+
+5. **Fallback Mechanisms**: Implement fallback logic in your application. If the model doesn't provide the expected format, have simple regex-based extractors as backup.
+
+6. **Example-Based Learning**: For more complex tasks, provide a sample of the desired output format directly in the prompt.
+
+7. **Temperature Settings**: Use a lower temperature setting (around 0.1-0.3) for extraction tasks to get more consistent responses.
+
+8. **Explicit Instructions**: The prompts explicitly tell the model exactly what to look for and how to format the response, which helps with output consistency.
+
+These modified prompts should work better with Llama 3:8B, as they:
+- Use simpler formatting requirements
+- Break complex tasks into smaller pieces
+- Provide clear, structured output formats
+- Avoid complex nested JSON structures
+- Include clear markers for different sections of the response
+- Focus on extracting information that's explicitly stated in the document
+
+Would you like me to adjust any specific prompt further or provide more specialized extraction prompts for particular aspects of SAR narrative generation?
+
+
+
+
 
 ## 1. Case Number Extraction Prompt
 

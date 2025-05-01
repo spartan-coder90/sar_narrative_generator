@@ -1,0 +1,168 @@
+
+## 1. Case Number Extraction Prompt
+
+```
+Extract the case number from the following document. 
+The case number is typically a unique identifier that starts with letters like CC, C, or AML followed by numbers.
+Return only the case number without any explanation or additional text.
+
+Document content:
+{text_content}
+```
+
+## 2. Alert Information Extraction Prompt
+
+```
+Extract the following alert information from the document:
+1. Alert ID - typically a unique identifier for the alert
+2. Alert month - typically in format YYYYMM (like 202302)
+3. Alert description - a description of why the alert was triggered
+4. Review period start date - the beginning of the period under review (MM/DD/YYYY format)
+5. Review period end date - the end of the period under review (MM/DD/YYYY format)
+
+Format your response as JSON with the following structure:
+{
+    "alert_id": "extracted alert ID",
+    "alert_month": "extracted alert month",
+    "description": "extracted description",
+    "review_period": {
+        "start": "start date in MM/DD/YYYY format",
+        "end": "end date in MM/DD/YYYY format"
+    }
+}
+
+Document content:
+{text_content}
+```
+
+## 3. Subject Information Extraction Prompt
+
+```
+Extract information about all subjects (individuals or entities) mentioned in the document.
+For each subject, extract:
+1. Name
+2. Whether they are the primary subject (true/false)
+3. Party key (if available)
+4. Occupation
+5. Employer
+6. Nationality
+7. Address
+8. Account relationship (role in relation to the account)
+
+Format your response as a JSON array with the following structure for each subject:
+[
+    {
+        "name": "full name",
+        "is_primary": true/false,
+        "party_key": "party key if available",
+        "occupation": "occupation if available",
+        "employer": "employer if available",
+        "nationality": "nationality if available",
+        "address": "address if available",
+        "account_relationship": "relationship to account if available"
+    },
+    {
+        // next subject...
+    }
+]
+
+Document content:
+{text_content}
+```
+
+## 4. Account Information Extraction Prompt
+
+```
+Extract account information from the document including:
+1. Account number
+2. Account type (checking, savings, etc.)
+3. Account title/name
+4. Open date (MM/DD/YYYY format)
+5. Close date (MM/DD/YYYY format if closed)
+6. Status (OPEN, CLOSED, etc.)
+7. Related parties (list of individuals associated with account)
+8. Branch name/location
+
+Format your response as JSON with the following structure:
+{
+    "account_number": "account number",
+    "account_type": "account type",
+    "account_title": "account title",
+    "open_date": "MM/DD/YYYY",
+    "close_date": "MM/DD/YYYY if closed, otherwise empty",
+    "status": "account status",
+    "related_parties": ["person1", "person2"],
+    "branch": "branch name/location"
+}
+
+Document content:
+{text_content}
+```
+
+## 5. Prior Cases Information Extraction Prompt
+
+```
+Extract information about prior cases or SARs mentioned in the document.
+For each prior case, extract:
+1. Case number
+2. Alert ID(s) - can be multiple
+3. Alert month(s) - can be multiple
+4. Review period start and end dates
+5. SAR form number (if available)
+6. Filing date (if available)
+7. Summary or description of the case
+
+Format your response as a JSON array:
+[
+    {
+        "case_number": "case number",
+        "alert_id": ["alert id 1", "alert id 2"],
+        "alert_month": ["alert month 1", "alert month 2"],
+        "review_period": {
+            "start": "MM/DD/YYYY",
+            "end": "MM/DD/YYYY"
+        },
+        "sar_form_number": "form number if available",
+        "filing_date": "MM/DD/YYYY if available",
+        "summary": "summary of the case"
+    },
+    {
+        // next prior case...
+    }
+]
+
+If no prior cases are mentioned, return an empty array [].
+
+Document content:
+{text_content}
+```
+
+## 6. Database Searches Extraction Prompt
+
+```
+Extract information about database searches mentioned in the document, particularly:
+1. KYC database results
+2. Adverse media results
+
+Format your response as JSON:
+{
+    "kyc": {
+        "results": "Extract of KYC database search results"
+    },
+    "adverse_media": {
+        "results": "Extract of adverse media search results"
+    }
+}
+
+Document content:
+{text_content}
+```
+
+## 7. Narrative Generation Prompt (from LLMClient)
+
+Based on the code, there's also a general narrative generation prompt used with the LLMClient that appears to be customizable:
+
+```
+{prompt_template}
+```
+

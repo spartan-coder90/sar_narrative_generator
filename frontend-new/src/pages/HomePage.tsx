@@ -1,24 +1,41 @@
-import React, { useState } from 'react';
+// Modified frontend-new/src/pages/HomePage.tsx
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Form, Button, Alert, Spinner } from 'react-bootstrap';
-import axios from 'axios';  // Add this import
+import axios from 'axios';
 import ApiService from '../services/api';
-import { ErrorResponse } from '../types';
-
-// Rest of the file remains the same...
+import { ErrorResponse, CaseSummary } from '../types';
 
 const HomePage: React.FC = () => {
   const navigate = useNavigate();
-  const [caseFile, setCaseFile] = useState<File | null>(null);
+  const [selectedCase, setSelectedCase] = useState<string>('');
   const [excelFile, setExcelFile] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoadingCases, setIsLoadingCases] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [availableCases, setAvailableCases] = useState<CaseSummary[]>([]);
   
-  const handleCaseFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      setCaseFile(e.target.files[0]);
-    }
+  // Fetch available cases on component mount
+  useEffect(() => {
+    const fetchCases = async () => {
+      try {
+        setIsLoadingCases(true);
+        const response = await ApiService.getAvailableCases();
+        setAvailableCases(response.cases);
+      } catch (err) {
+        console.error('Error fetching available cases:', err);
+        setError('Failed to load available cases');
+      } finally {
+        setIsLoadingCases(false);
+      }
+    };
+    
+    fetchCases();
+  }, []);
+  
+  const handleCaseChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setSelectedCase(e.target.value);
   };
   
   const handleExcelFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -34,9 +51,14 @@ const HomePage: React.FC = () => {
     setError(null);
     setWarnings([]);
     
-    // Validate files
-    if (!caseFile || !excelFile) {
-      setError('Both case file and Excel file are required');
+    // Validate input
+    if (!selectedCase) {
+      setError('Please select a case');
+      return;
+    }
+    
+    if (!excelFile) {
+      setError('Excel file is required');
       return;
     }
     
@@ -45,7 +67,7 @@ const HomePage: React.FC = () => {
     
     try {
       // Call API to generate narrative
-      const response = await ApiService.generateNarrative(caseFile, excelFile);
+      const response = await ApiService.generateNarrativeFromCase(selectedCase, excelFile);
       
       // Check if there are warnings
       if (response.warnings && response.warnings.length > 0) {
@@ -81,19 +103,33 @@ const HomePage: React.FC = () => {
           
           <Card className="shadow-sm">
             <Card.Header className="bg-primary text-white">
-              <h4 className="mb-0">Upload Files</h4>
+              <h4 className="mb-0">Select Case & Upload Transactions</h4>
             </Card.Header>
             <Card.Body>
               <Form onSubmit={handleSubmit}>
                 <Form.Group className="mb-3">
-                  <Form.Label>Case Document</Form.Label>
-                  <Form.Control 
-                    type="file" 
-                    onChange={handleCaseFileChange}
-                    accept=".json,.txt,.doc,.docx"
-                  />
+                  <Form.Label>Select Case</Form.Label>
+                  <Form.Select
+                    value={selectedCase}
+                    onChange={handleCaseChange}
+                    disabled={isLoadingCases}
+                  >
+                    <option value="">Select a case...</option>
+                    // Continuing frontend-new/src/pages/HomePage.tsx
+                    {availableCases.map((caseItem) => (
+                      <option key={caseItem.case_number} value={caseItem.case_number}>
+                        {caseItem.case_number} - {caseItem.subjects.join(', ')}
+                      </option>
+                    ))}
+                  </Form.Select>
+                  {isLoadingCases && (
+                    <div className="text-center mt-2">
+                      <Spinner animation="border" size="sm" />
+                      <span className="ms-2">Loading cases...</span>
+                    </div>
+                  )}
                   <Form.Text className="text-muted">
-                    Upload the case document containing subject and account information.
+                    Select a case from the available options.
                   </Form.Text>
                 </Form.Group>
                 
@@ -113,7 +149,7 @@ const HomePage: React.FC = () => {
                   <Button 
                     variant="primary" 
                     type="submit" 
-                    disabled={isLoading || !caseFile || !excelFile}
+                    disabled={isLoading || !selectedCase || !excelFile}
                   >
                     {isLoading ? (
                       <>

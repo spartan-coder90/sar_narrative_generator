@@ -291,15 +291,32 @@ class DataValidator:
         }
         
         # Fill missing review period from activity summary dates if available
-        if not combined_data["alert_info"].get("review_period", {}).get("start") and combined_data["activity_summary"].get("start_date"):
-            if "review_period" not in combined_data["alert_info"]:
-                combined_data["alert_info"]["review_period"] = {}
-            combined_data["alert_info"]["review_period"]["start"] = combined_data["activity_summary"]["start_date"]
-        
-        if not combined_data["alert_info"].get("review_period", {}).get("end") and combined_data["activity_summary"].get("end_date"):
-            if "review_period" not in combined_data["alert_info"]:
-                combined_data["alert_info"]["review_period"] = {}
-            combined_data["alert_info"]["review_period"]["end"] = combined_data["activity_summary"]["end_date"]
+        # Handle alert_info as either a list or dictionary
+        if isinstance(combined_data["alert_info"], list) and combined_data["alert_info"]:
+            # If it's a list, use the first item (main alert)
+            alert = combined_data["alert_info"][0]
+            
+            if not alert.get("review_period", {}).get("start") and combined_data["activity_summary"].get("start_date"):
+                if "review_period" not in alert:
+                    alert["review_period"] = {}
+                alert["review_period"]["start"] = combined_data["activity_summary"]["start_date"]
+            
+            if not alert.get("review_period", {}).get("end") and combined_data["activity_summary"].get("end_date"):
+                if "review_period" not in alert:
+                    alert["review_period"] = {}
+                alert["review_period"]["end"] = combined_data["activity_summary"]["end_date"]
+                
+        elif isinstance(combined_data["alert_info"], dict):
+            # Original code for dictionary format
+            if not combined_data["alert_info"].get("review_period", {}).get("start") and combined_data["activity_summary"].get("start_date"):
+                if "review_period" not in combined_data["alert_info"]:
+                    combined_data["alert_info"]["review_period"] = {}
+                combined_data["alert_info"]["review_period"]["start"] = combined_data["activity_summary"]["start_date"]
+            
+            if not combined_data["alert_info"].get("review_period", {}).get("end") and combined_data["activity_summary"].get("end_date"):
+                if "review_period" not in combined_data["alert_info"]:
+                    combined_data["alert_info"]["review_period"] = {}
+                combined_data["alert_info"]["review_period"]["end"] = combined_data["activity_summary"]["end_date"]
         
         # Ensure primary subject exists
         if combined_data["subjects"] and not any(subject.get("is_primary") for subject in combined_data["subjects"]):

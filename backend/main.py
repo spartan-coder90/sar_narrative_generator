@@ -1,3 +1,4 @@
+# backend/main.py
 """
 Main entry point for SAR Narrative Generator API
 """

@@ -1,8 +1,10 @@
+// Modified frontend-new/src/services/api.ts
 import axios from 'axios';
 import { 
   GenerateResponse, 
   UpdateSectionResponse, 
-  RegenerateSectionResponse 
+  RegenerateSectionResponse,
+  CaseSummary
 } from '../types';
 
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8081/api';
@@ -17,10 +19,16 @@ const api = axios.create({
 
 // API Service
 export const ApiService = {
-  // Generate SAR narrative from uploaded files
-  generateNarrative: async (caseFile: File, excelFile: File): Promise<GenerateResponse> => {
+  // Get available cases for dropdown
+  getAvailableCases: async (): Promise<{ cases: CaseSummary[] }> => {
+    const response = await api.get<{ status: string, cases: CaseSummary[] }>('/cases');
+    return response.data;
+  },
+
+  // Generate SAR narrative from selected case and uploaded Excel file
+  generateNarrative: async (caseNumber: string, excelFile: File): Promise<GenerateResponse> => {
     const formData = new FormData();
-    formData.append('caseFile', caseFile);
+    formData.append('case_number', caseNumber);
     formData.append('excelFile', excelFile);
     
     const response = await api.post<GenerateResponse>('/generate', formData, {
@@ -64,10 +72,25 @@ export const ApiService = {
     return response.data;
   },
   
+    // Generate SAR narrative from selected case and uploaded Excel file
+  generateNarrativeFromCase: async (caseNumber: string, excelFile: File): Promise<GenerateResponse> => {
+    const formData = new FormData();
+    formData.append('case_number', caseNumber);
+    formData.append('excelFile', excelFile);
+    
+    const response = await api.post<GenerateResponse>('/generate-from-case', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    });
+    
+    return response.data;
+  },
   // Get export URL
   getExportUrl: (sessionId: string): string => {
     return `${API_BASE_URL}/export/${sessionId}`;
   }
 };
+
 
 export default ApiService;

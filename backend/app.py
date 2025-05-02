@@ -25,6 +25,7 @@ from backend.processors.data_validator import DataValidator
 from backend.generators.narrative_generator import NarrativeGenerator
 from backend.utils.json_utils import save_to_json_file, load_from_json_file
 
+
 # Set up logging
 logger = get_logger(__name__)
 
@@ -500,11 +501,163 @@ def rebuild_narrative(sections):
     
     return "\n\n".join([section for section in ordered_sections if section])
 
+@app.route('/api/cases', methods=['GET'])
+def get_available_case_list():
+    """Get list of available cases for UI dropdown"""
+    try:
+        from backend.data.case_repository import get_available_cases
+        cases = get_available_cases()
+        return jsonify({
+            "status": "success",
+            "cases": cases
+        }), 200
+    except Exception as e:
+        logger.error(f"Error retrieving available cases: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": f"Error retrieving available cases: {str(e)}"
+        }), 500
+
+@app.route('/api/generate-from-case', methods=['POST'])
+def generate_from_case():
+    """
+    Process selected case and uploaded Excel file to generate SAR narrative
+    
+    Requires:
+    - case_number: Case number to use from static repository
+    - excelFile: Transaction Excel file
+    
+    Returns:
+    - narrative: Generated SAR narrative
+    - warnings: Any warnings during processing
+    - errors: Any errors during processing
+    """
+    # Check if case_number was provided
+    case_number = request.form.get('case_number')
+    if not case_number:
+        return jsonify({
+            "status": "error",
+            "message": "Case number is required"
+        }), 400
+    
+    # Check if Excel file was uploaded
+    if 'excelFile' not in request.files:
+        return jsonify({
+            "status": "error",
+            "message": "Excel file is required"
+        }), 400
+    
+    excel_file = request.files['excelFile']
+    
+    # Check if file is empty
+    if excel_file.filename == '':
+        return jsonify({
+            "status": "error",
+            "message": "Empty Excel file name"
+        }), 400
+    
+    # Retrieve static case data
+    try:
+        from backend.data.case_repository import get_case
+        case_data = get_case(case_number)
+        if not case_data:
+            return jsonify({
+                "status": "error",
+                "message": f"Case number {case_number} not found"
+            }), 404
+    except Exception as e:
+        logger.error(f"Error retrieving case data: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": f"Error retrieving case data: {str(e)}"
+        }), 500
+    
+    # Create a unique session folder for this request
+    session_id = str(uuid.uuid4())
+    upload_folder = os.path.join(app.config['UPLOAD_FOLDER'], session_id)
+    os.makedirs(upload_folder, exist_ok=True)
+    
+    # Save uploaded Excel file
+    excel_filename = secure_filename(excel_file.filename)
+    excel_path = os.path.join(upload_folder, excel_filename)
+    excel_file.save(excel_path)
+    
+    try:
+        # Process Excel file
+        logger.info(f"Processing Excel file: {os.path.basename(excel_path)}")
+        excel_processor = ExcelProcessor(excel_path)
+        excel_data = excel_processor.process()
+        
+        # Validate data
+        validator = DataValidator(case_data, excel_data)
+        is_valid, errors, warnings = validator.validate()
+        
+        if not is_valid and errors:
+            return jsonify({
+                "status": "error",
+                "message": "Validation failed",
+                "errors": errors,
+                "warnings": warnings
+            }), 400
+        
+        # Fill missing data and get combined result
+        combined_data = validator.fill_missing_data()
+        
+        # Generate narrative
+        try:
+            narrative_generator = NarrativeGenerator(combined_data)
+            narrative = narrative_generator.generate_narrative()
+        except Exception as e:
+            logger.error(f"Error generating narrative: {str(e)}", exc_info=True)
+            return jsonify({
+                "status": "error",
+                "message": f"Error in narrative generation: {str(e)}"
+            }), 500
+        
+        # Split narrative into sections
+        sections = split_narrative_into_sections(narrative)
+        
+        # Create response with session ID for future reference
+        response = {
+            "status": "success",
+            "sessionId": session_id,
+            "caseNumber": case_data.get("case_number", ""),
+            "accountNumber": case_data.get("account_info", {}).get("account_number", ""),
+            "dateGenerated": datetime.now().isoformat(),
+            "warnings": warnings,
+            "sections": sections,
+            "excelFilename": os.path.basename(excel_path)
+        }
+        
+        # Save a copy of the processed data for later use
+        save_to_json_file({
+            "case_data": case_data,
+            "excel_data": excel_data,
+            "combined_data": combined_data,
+            "narrative": narrative,
+            "sections": sections
+        }, os.path.join(upload_folder, 'data.json'))
+        
+        return jsonify(response), 200
+    
+    except Exception as e:
+        logger.error(f"Error generating narrative: {str(e)}", exc_info=True)
+        # Clean up upload folder on error
+        try:
+            import shutil
+            shutil.rmtree(upload_folder)
+        except Exception as cleanup_error:
+            logger.error(f"Error cleaning up temporary files: {str(cleanup_error)}")
+            
+        return jsonify({
+            "status": "error",
+            "message": f"Error generating narrative: {str(e)}"
+        }), 500
 
 if __name__ == '__main__':
     # Check which variables exist in config for host and port
     host = getattr(config, 'API_HOST', getattr(config, 'HOST', '0.0.0.0'))
-    port = getattr(config, 'API_PORT', getattr(config, 'PORT', 8080))
+    port = getattr(config, 'API_PORT', getattr(config, 'PORT', 8081))
     debug = getattr(config, 'API_DEBUG', getattr(config, 'DEBUG', False))
     
     # Add missing import

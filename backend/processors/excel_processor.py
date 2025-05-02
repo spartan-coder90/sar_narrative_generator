@@ -27,9 +27,12 @@ class ExcelProcessor:
         self.sheets = {}
         self.data = {
             "activity_summary": {},
-            "unusual_activity": {},
-            "cta_sample": {},
-            "bip_sample": {}
+            "unusual_activity": {"summary": {}, "transactions": []},
+            "cta_sample": {"summary": {}, "transactions": []},
+            "bip_sample": {"summary": {}, "transactions": []},
+            "transaction_summary": {},
+            "account_summaries": {},
+            "inter_account_transfers": []
         }
         
     def load_workbook(self) -> bool:
@@ -52,13 +55,20 @@ class ExcelProcessor:
                     sheet_key = "activity_summary"
                 elif "unusual" in sheet_name.lower() and "activity" in sheet_name.lower():
                     sheet_key = "unusual_activity"
-                elif "cta" in sheet_name.lower() or "sample" in sheet_name.lower():
+                elif "cta" in sheet_name.lower() or ("sample" in sheet_name.lower() and "cta" in sheet_name.lower()):
                     sheet_key = "cta_sample"
                 elif "bip" in sheet_name.lower() or "business" in sheet_name.lower():
                     sheet_key = "bip_sample"
-                
+                elif "transaction" in sheet_name.lower():
+                    sheet_key = f"transaction_{sheet_name.lower().replace(' ', '_')}"
+                    
                 if sheet_key:
+                    logger.info(f"Loading sheet: {sheet_name} as {sheet_key}")
                     self.sheets[sheet_key] = pd.read_excel(xlsx, sheet_name)
+                else:
+                    # Load all sheets for potential transaction data
+                    logger.info(f"Loading unclassified sheet: {sheet_name}")
+                    self.sheets[sheet_name.lower().replace(' ', '_')] = pd.read_excel(xlsx, sheet_name)
             
             logger.info(f"Successfully loaded workbook: {os.path.basename(self.file_path)}")
             logger.info(f"Found sheets: {list(self.sheets.keys())}")
@@ -174,161 +184,435 @@ class ExcelProcessor:
     
     def process_unusual_activity(self) -> Dict[str, Any]:
         """
-        Process Unusual Activity tab
+        Process Unusual Activity tab - extract both summary data and transaction list
         
         Returns:
-            Dict: Extracted unusual activity data
+            Dict: Extracted unusual activity data including summary and transactions
         """
         if "unusual_activity" not in self.sheets:
             logger.warning("Unusual Activity sheet not found")
-            return {"samples": []}
+            return {"summary": {}, "transactions": []}
         
         df = self.sheets["unusual_activity"]
         
         unusual_activity = {
-            "description": "",
-            "samples": []
+            "summary": {
+                "total_amount": 0.0,
+                "date_range": {"start": "", "end": ""},
+                "description": "",
+                "derived_from": ""
+            },
+            "transactions": []
         }
         
         try:
-            # Look for description fields
-            desc_cols = [col for col in df.columns if 'desc' in col.lower()]
-            if desc_cols:
-                descriptions = df[desc_cols[0]].dropna().tolist()
-                if descriptions:
-                    unusual_activity["description"] = " ".join(descriptions[:3])  # Take first few descriptions
+            # Extract summary information (typically at the top of the sheet)
+            # Look for total amount - usually clearly labeled
+            total_amount_pattern = r'(?:Unusual Total for SAR|Total Amount).*?[$]?([0-9,.]+)'
+            for idx, row in df.iterrows():
+                row_text = ' '.join([str(cell) for cell in row if pd.notna(cell)])
+                match = re.search(total_amount_pattern, row_text)
+                if match:
+                    unusual_activity["summary"]["total_amount"] = float(match.group(1).replace(',', ''))
+                    break
             
-            # Extract transaction samples (up to 5)
-            # First, identify required columns
-            date_col = next((col for col in df.columns if 'date' in col.lower()), None)
-            type_col = next((col for col in df.columns if 'type' in col.lower()), None)
-            amount_col = next((col for col in df.columns if 'amount' in col.lower()), None)
-            location_col = next((col for col in df.columns 
-                              if any(loc in col.lower() for loc in ['location', 'branch', 'place'])), None)
+            # Look for date range
+            date_range_pattern = r'Date Range:?\s*(\d{1,2}/\d{1,2}/\d{2,4}).*?(\d{1,2}/\d{1,2}/\d{2,4})'
+            for idx, row in df.iterrows():
+                row_text = ' '.join([str(cell) for cell in row if pd.notna(cell)])
+                match = re.search(date_range_pattern, row_text)
+                if match:
+                    unusual_activity["summary"]["date_range"]["start"] = match.group(1)
+                    unusual_activity["summary"]["date_range"]["end"] = match.group(2)
+                    break
             
-            if date_col and amount_col:  # Minimum required columns
-                # Get up to 5 samples
-                for idx, row in df.head(5).iterrows():
-                    sample = {
-                        "date": row[date_col] if not pd.isna(row[date_col]) else None,
-                        "amount": row[amount_col] if not pd.isna(row[amount_col]) else 0.0,
-                        "type": row[type_col] if type_col and not pd.isna(row[type_col]) else "transaction",
-                        "location": row[location_col] if location_col and not pd.isna(row[location_col]) else "N/A"
-                    }
-                    
-                    # Format date if it's a datetime object
-                    if isinstance(sample["date"], datetime):
-                        sample["date"] = sample["date"].strftime('%m/%d/%Y')
-                    
-                    # Format amount if it's a string with $ or commas
-                    if isinstance(sample["amount"], str):
-                        sample["amount"] = float(re.sub(r'[\$,]', '', sample["amount"]))
-                    
-                    unusual_activity["samples"].append(sample)
+            # Look for derived from (credits/debits)
+            derived_pattern = r'Derived from\s*(.*?)(?:\s*Date Range|\s*$)'
+            for idx, row in df.iterrows():
+                row_text = ' '.join([str(cell) for cell in row if pd.notna(cell)])
+                match = re.search(derived_pattern, row_text)
+                if match:
+                    unusual_activity["summary"]["derived_from"] = match.group(1).strip()
+                    break
             
-            logger.info(f"Successfully processed Unusual Activity: {len(unusual_activity['samples'])} samples")
+            # Find where transaction list begins - typically has header row with "Date", "Amount", etc.
+            transaction_start_idx = None
+            for idx, row in df.iterrows():
+                row_text = ' '.join([str(cell) for cell in row if pd.notna(cell)]).lower()
+                if ('date' in row_text and 'amount' in row_text) or ('type' in row_text and 'amount' in row_text):
+                    transaction_start_idx = idx + 1  # Start from next row
+                    break
+            
+            if transaction_start_idx is not None:
+                # Extract transactions
+                transaction_df = df.iloc[transaction_start_idx:].reset_index(drop=True)
+                
+                # Identify key columns from the header row
+                header_row = df.iloc[transaction_start_idx - 1]
+                
+                date_col = None
+                amount_col = None
+                type_col = None
+                description_col = None
+                
+                for i, cell in enumerate(header_row):
+                    if pd.isna(cell):
+                        continue
+                    cell_text = str(cell).lower()
+                    if 'date' in cell_text:
+                        date_col = i
+                    elif 'amount' in cell_text or 'sum' in cell_text:
+                        amount_col = i
+                    elif 'type' in cell_text or 'category' in cell_text:
+                        type_col = i
+                    elif 'desc' in cell_text or 'note' in cell_text:
+                        description_col = i
+                
+                # If columns not found by header, try to identify by content
+                if date_col is None or amount_col is None:
+                    for col_idx in range(len(transaction_df.columns)):
+                        col_values = transaction_df.iloc[:, col_idx].dropna()
+                        if col_values.empty:
+                            continue
+                        
+                        # Check if column contains dates
+                        if date_col is None:
+                            date_pattern = r'\d{1,2}/\d{1,2}/\d{2,4}'
+                            if col_values.astype(str).str.match(date_pattern).any():
+                                date_col = col_idx
+                        
+                        # Check if column contains monetary amounts
+                        if amount_col is None:
+                            amount_pattern = r'[$]?[0-9,.]+\.\d{2}'
+                            if col_values.astype(str).str.match(amount_pattern).any():
+                                amount_col = col_idx
+                
+                # Process transactions if we have at least date and amount columns
+                if date_col is not None and amount_col is not None:
+                    for idx, row in transaction_df.iterrows():
+                        # Skip rows without date or amount
+                        if pd.isna(row.iloc[date_col]) or pd.isna(row.iloc[amount_col]):
+                            continue
+                        
+                        transaction = {
+                            "date": row.iloc[date_col],
+                            "amount": row.iloc[amount_col]
+                        }
+                        
+                        # Add type if available
+                        if type_col is not None and not pd.isna(row.iloc[type_col]):
+                            transaction["type"] = row.iloc[type_col]
+                        
+                        # Add description if available
+                        if description_col is not None and not pd.isna(row.iloc[description_col]):
+                            transaction["description"] = row.iloc[description_col]
+                        
+                        # Format date if it's a datetime object
+                        if isinstance(transaction["date"], datetime):
+                            transaction["date"] = transaction["date"].strftime('%m/%d/%Y')
+                        
+                        # Format amount if it's a string with $ or commas
+                        if isinstance(transaction["amount"], str):
+                            amount_match = re.search(r'[$]?([0-9,.]+)', transaction["amount"])
+                            if amount_match:
+                                transaction["amount"] = float(amount_match.group(1).replace(',', ''))
+                        
+                        unusual_activity["transactions"].append(transaction)
+            
+            logger.info(f"Successfully processed Unusual Activity: {len(unusual_activity['transactions'])} transactions")
+            logger.info(f"Unusual activity summary: Total ${unusual_activity['summary']['total_amount']:.2f}, "
+                        f"Date range: {unusual_activity['summary']['date_range']['start']} - "
+                        f"{unusual_activity['summary']['date_range']['end']}")
+            
             return unusual_activity
             
         except Exception as e:
             logger.error(f"Error processing Unusual Activity: {str(e)}")
-            return {"samples": []}
-    
+            return {"summary": {}, "transactions": []}
+
     def process_cta_sample(self) -> Dict[str, Any]:
         """
-        Process CTA Sample tab
+        Process CTA Sample tab - extract and summarize transaction data
         
         Returns:
-            Dict: Extracted CTA sample data
+            Dict: Extracted and summarized CTA transaction data
         """
         if "cta_sample" not in self.sheets:
             logger.warning("CTA Sample sheet not found")
-            return {}
+            return {"transactions": [], "summary": {}}
         
         df = self.sheets["cta_sample"]
         
-        cta_sample = {
-            "customer_name": "",
-            "interview_date": "",
-            "summary": ""
+        cta_data = {
+            "transactions": [],
+            "summary": {
+                "total_amount": 0.0,
+                "transaction_count": 0,
+                "date_range": {"start": "", "end": ""},
+                "transaction_types": []
+            }
         }
         
         try:
-            # Look for customer name field
-            name_cols = [col for col in df.columns 
-                      if any(n in col.lower() for n in ['customer name', 'name', 'customer'])]
-            if name_cols and not df[name_cols[0]].empty:
-                cta_sample["customer_name"] = df[name_cols[0]].iloc[0]
+            # Skip any potential header rows - look for a row that has date and amount
+            transaction_start_idx = 0
+            for idx, row in df.iterrows():
+                row_text = ' '.join([str(cell) for cell in row if pd.notna(cell)]).lower()
+                if ('date' in row_text and 'amount' in row_text) or ('transaction' in row_text and 'amount' in row_text):
+                    transaction_start_idx = idx + 1  # Start from next row
+                    break
             
-            # Look for interview date field
-            date_cols = [col for col in df.columns 
-                      if any(d in col.lower() for n in ['interview date', 'date', 'conducted'])]
-            if date_cols and not df[date_cols[0]].empty:
-                date_val = df[date_cols[0]].iloc[0]
-                if isinstance(date_val, datetime):
-                    cta_sample["interview_date"] = date_val.strftime('%m/%d/%Y')
-                else:
-                    cta_sample["interview_date"] = str(date_val)
+            # Extract transactions
+            transaction_df = df.iloc[transaction_start_idx:].reset_index(drop=True)
             
-            # Look for summary field
-            summary_cols = [col for col in df.columns 
-                         if any(s in col.lower() for s in ['summary', 'notes', 'details', 'findings'])]
-            if summary_cols and not df[summary_cols[0]].empty:
-                cta_sample["summary"] = df[summary_cols[0]].iloc[0]
+            # Identify key columns
+            date_col = self._find_column(transaction_df, ['date', 'transaction date'])
+            amount_col = self._find_column(transaction_df, ['amount', 'transaction amount'])
+            type_col = self._find_column(transaction_df, ['type', 'transaction type'])
+            description_col = self._find_column(transaction_df, ['description', 'desc', 'note'])
             
-            logger.info(f"Successfully processed CTA Sample: {cta_sample}")
-            return cta_sample
+            # If key columns not found, try to detect them by content
+            if not date_col or not amount_col:
+                for col_idx, col_name in enumerate(transaction_df.columns):
+                    col_values = transaction_df.iloc[:, col_idx].dropna()
+                    if col_values.empty:
+                        continue
+                    
+                    # Check if column contains dates
+                    if not date_col:
+                        date_pattern = r'\d{1,2}/\d{1,2}/\d{2,4}'
+                        if col_values.astype(str).str.match(date_pattern).any():
+                            date_col = col_idx
+                    
+                    # Check if column contains monetary amounts
+                    if not amount_col:
+                        amount_pattern = r'[$]?[0-9,.]+\.\d{2}'
+                        if col_values.astype(str).str.match(amount_pattern).any():
+                            amount_col = col_idx
+            
+            # Process transactions if we have at least date and amount columns
+            dates = []
+            types = set()
+            total_amount = 0.0
+            
+            if date_col is not None and amount_col is not None:
+                for idx, row in transaction_df.iterrows():
+                    # Skip rows without date or amount
+                    if pd.isna(row.iloc[date_col]) or pd.isna(row.iloc[amount_col]):
+                        continue
+                    
+                    transaction = {
+                        "date": row.iloc[date_col],
+                        "amount": row.iloc[amount_col]
+                    }
+                    
+                    # Add type if available
+                    if type_col is not None and not pd.isna(row.iloc[type_col]):
+                        transaction["type"] = row.iloc[type_col]
+                        types.add(str(transaction["type"]))
+                    
+                    # Add description if available
+                    if description_col is not None and not pd.isna(row.iloc[description_col]):
+                        transaction["description"] = row.iloc[description_col]
+                    
+                    # Format date if it's a datetime object
+                    if isinstance(transaction["date"], datetime):
+                        transaction["date"] = transaction["date"].strftime('%m/%d/%Y')
+                    
+                    # Format amount if it's a string with $ or commas
+                    if isinstance(transaction["amount"], str):
+                        amount_match = re.search(r'[$]?([0-9,.]+)', transaction["amount"])
+                        if amount_match:
+                            transaction["amount"] = float(amount_match.group(1).replace(',', ''))
+                    
+                    # Add to summary data
+                    dates.append(transaction["date"])
+                    total_amount += float(transaction["amount"])
+                    
+                    cta_data["transactions"].append(transaction)
+            
+            # Update summary
+            cta_data["summary"]["total_amount"] = total_amount
+            cta_data["summary"]["transaction_count"] = len(cta_data["transactions"])
+            cta_data["summary"]["transaction_types"] = list(types)
+            
+            # Set date range if we have dates
+            if dates:
+                try:
+                    # Convert string dates to datetime objects for comparison
+                    date_objects = []
+                    for date_str in dates:
+                        try:
+                            date_obj = datetime.strptime(date_str, '%m/%d/%Y')
+                            date_objects.append(date_obj)
+                        except ValueError:
+                            # Try alternate format
+                            try:
+                                date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+                                date_objects.append(date_obj)
+                            except ValueError:
+                                continue
+                    
+                    if date_objects:
+                        start_date = min(date_objects).strftime('%m/%d/%Y')
+                        end_date = max(date_objects).strftime('%m/%d/%Y')
+                        cta_data["summary"]["date_range"]["start"] = start_date
+                        cta_data["summary"]["date_range"]["end"] = end_date
+                except Exception as date_err:
+                    logger.warning(f"Error setting date range: {str(date_err)}")
+            
+            logger.info(f"Successfully processed CTA Sample: {len(cta_data['transactions'])} transactions")
+            logger.info(f"CTA summary: Total ${cta_data['summary']['total_amount']:.2f}, "
+                        f"{cta_data['summary']['transaction_count']} transactions")
+            
+            return cta_data
             
         except Exception as e:
             logger.error(f"Error processing CTA Sample: {str(e)}")
-            return cta_sample
-    
+            return {"transactions": [], "summary": {}}
+
     def process_bip_sample(self) -> Dict[str, Any]:
         """
-        Process BIP Sample tab
+        Process BIP Sample tab - extract and summarize transaction data
         
         Returns:
-            Dict: Extracted BIP sample data
+            Dict: Extracted and summarized BIP transaction data
         """
         if "bip_sample" not in self.sheets:
             logger.warning("BIP Sample sheet not found")
-            return {}
+            return {"transactions": [], "summary": {}}
         
         df = self.sheets["bip_sample"]
         
-        bip_sample = {
-            "business_name": "",
-            "business_type": "",
-            "summary": ""
+        bip_data = {
+            "transactions": [],
+            "summary": {
+                "total_amount": 0.0,
+                "transaction_count": 0,
+                "date_range": {"start": "", "end": ""},
+                "transaction_types": []
+            }
         }
         
         try:
-            # Look for business name field
-            name_cols = [col for col in df.columns 
-                      if any(n in col.lower() for n in ['business name', 'name', 'business'])]
-            if name_cols and not df[name_cols[0]].empty:
-                bip_sample["business_name"] = df[name_cols[0]].iloc[0]
+            # Similar implementation to process_cta_sample
+            # Skip any potential header rows
+            transaction_start_idx = 0
+            for idx, row in df.iterrows():
+                row_text = ' '.join([str(cell) for cell in row if pd.notna(cell)]).lower()
+                if ('date' in row_text and 'amount' in row_text) or ('transaction' in row_text and 'amount' in row_text):
+                    transaction_start_idx = idx + 1  # Start from next row
+                    break
             
-            # Look for business type field
-            type_cols = [col for col in df.columns 
-                      if any(t in col.lower() for t in ['business type', 'type', 'industry'])]
-            if type_cols and not df[type_cols[0]].empty:
-                bip_sample["business_type"] = df[type_cols[0]].iloc[0]
+            # Extract transactions
+            transaction_df = df.iloc[transaction_start_idx:].reset_index(drop=True)
             
-            # Look for summary field
-            summary_cols = [col for col in df.columns 
-                         if any(s in col.lower() for s in ['summary', 'notes', 'details', 'findings'])]
-            if summary_cols and not df[summary_cols[0]].empty:
-                bip_sample["summary"] = df[summary_cols[0]].iloc[0]
+            # Identify key columns
+            date_col = self._find_column(transaction_df, ['date', 'transaction date'])
+            amount_col = self._find_column(transaction_df, ['amount', 'transaction amount'])
+            type_col = self._find_column(transaction_df, ['type', 'transaction type'])
+            description_col = self._find_column(transaction_df, ['description', 'desc', 'note'])
             
-            logger.info(f"Successfully processed BIP Sample: {bip_sample}")
-            return bip_sample
+            # If key columns not found, try to detect them by content
+            if not date_col or not amount_col:
+                for col_idx, col_name in enumerate(transaction_df.columns):
+                    col_values = transaction_df.iloc[:, col_idx].dropna()
+                    if col_values.empty:
+                        continue
+                    
+                    # Check if column contains dates
+                    if not date_col:
+                        date_pattern = r'\d{1,2}/\d{1,2}/\d{2,4}'
+                        if col_values.astype(str).str.match(date_pattern).any():
+                            date_col = col_idx
+                    
+                    # Check if column contains monetary amounts
+                    if not amount_col:
+                        amount_pattern = r'[$]?[0-9,.]+\.\d{2}'
+                        if col_values.astype(str).str.match(amount_pattern).any():
+                            amount_col = col_idx
+            
+            # Process transactions if we have at least date and amount columns
+            dates = []
+            types = set()
+            total_amount = 0.0
+            
+            if date_col is not None and amount_col is not None:
+                for idx, row in transaction_df.iterrows():
+                    # Skip rows without date or amount
+                    if pd.isna(row.iloc[date_col]) or pd.isna(row.iloc[amount_col]):
+                        continue
+                    
+                    transaction = {
+                        "date": row.iloc[date_col],
+                        "amount": row.iloc[amount_col]
+                    }
+                    
+                    # Add type if available
+                    if type_col is not None and not pd.isna(row.iloc[type_col]):
+                        transaction["type"] = row.iloc[type_col]
+                        types.add(str(transaction["type"]))
+                    
+                    # Add description if available
+                    if description_col is not None and not pd.isna(row.iloc[description_col]):
+                        transaction["description"] = row.iloc[description_col]
+                    
+                    # Format date if it's a datetime object
+                    if isinstance(transaction["date"], datetime):
+                        transaction["date"] = transaction["date"].strftime('%m/%d/%Y')
+                    
+                    # Format amount if it's a string with $ or commas
+                    if isinstance(transaction["amount"], str):
+                        amount_match = re.search(r'[$]?([0-9,.]+)', transaction["amount"])
+                        if amount_match:
+                            transaction["amount"] = float(amount_match.group(1).replace(',', ''))
+                    
+                    # Add to summary data
+                    dates.append(transaction["date"])
+                    total_amount += float(transaction["amount"])
+                    
+                    bip_data["transactions"].append(transaction)
+            
+            # Update summary
+            bip_data["summary"]["total_amount"] = total_amount
+            bip_data["summary"]["transaction_count"] = len(bip_data["transactions"])
+            bip_data["summary"]["transaction_types"] = list(types)
+            
+            # Set date range if we have dates
+            if dates:
+                try:
+                    # Convert string dates to datetime objects for comparison
+                    date_objects = []
+                    for date_str in dates:
+                        try:
+                            date_obj = datetime.strptime(date_str, '%m/%d/%Y')
+                            date_objects.append(date_obj)
+                        except ValueError:
+                            # Try alternate format
+                            try:
+                                date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+                                date_objects.append(date_obj)
+                            except ValueError:
+                                continue
+                    
+                    if date_objects:
+                        start_date = min(date_objects).strftime('%m/%d/%Y')
+                        end_date = max(date_objects).strftime('%m/%d/%Y')
+                        bip_data["summary"]["date_range"]["start"] = start_date
+                        bip_data["summary"]["date_range"]["end"] = end_date
+                except Exception as date_err:
+                    logger.warning(f"Error setting date range: {str(date_err)}")
+            
+            logger.info(f"Successfully processed BIP Sample: {len(bip_data['transactions'])} transactions")
+            logger.info(f"BIP summary: Total ${bip_data['summary']['total_amount']:.2f}, "
+                        f"{bip_data['summary']['transaction_count']} transactions")
+            
+            return bip_data
             
         except Exception as e:
             logger.error(f"Error processing BIP Sample: {str(e)}")
-            return bip_sample
+            return {"transactions": [], "summary": {}}
     
-    # Adding to the existing ExcelProcessor class
-
     def summarize_transactions(self, sheet_data):
         """
         Summarize transaction data without analysis of patterns
@@ -693,13 +977,21 @@ class ExcelProcessor:
         if not self.load_workbook():
             return self.data
         
-        # Process standard tabs
+        # Process specialized tabs with direct extraction
+        logger.info("Processing Activity Summary tab...")
         self.data["activity_summary"] = self.process_activity_summary()
+        
+        logger.info("Processing Unusual Activity tab...")
         self.data["unusual_activity"] = self.process_unusual_activity()
+        
+        logger.info("Processing CTA Sample tab...")
         self.data["cta_sample"] = self.process_cta_sample()
+        
+        logger.info("Processing BIP Sample tab...")
         self.data["bip_sample"] = self.process_bip_sample()
         
         # Process transaction summaries with multi-account awareness
+        logger.info("Processing transaction summaries across accounts...")
         multi_account_summary = self.summarize_multi_account_transactions()
         self.data["transaction_summary"] = multi_account_summary.get("consolidated", {})
         self.data["account_summaries"] = multi_account_summary.get("accounts", {})

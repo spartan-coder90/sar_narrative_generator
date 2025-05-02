@@ -31,7 +31,10 @@ Configuration file for SAR Narrative Generator templates
 """
 
 # SAR Narrative template sections
-SAR_TEMPLATES = {
+# Add this to backend/config.py
+
+# SAR Narrative template sections
+TEMPLATES = {
     "INTRODUCTION": """U.S. Bank National Association (USB), is filing this Suspicious Activity Report (SAR) to report {activity_type} totaling {total_amount} {derived_from} by {subjects} in {account_type} account number {account_number}. The suspicious activity was conducted from {start_date} through {end_date}.""",
     
     "PRIOR_CASES": """Prior SAR (Case Number: {prior_case_number}) was filed on {prior_filing_date} reporting {prior_description}.""",
@@ -49,7 +52,7 @@ SAR_TEMPLATES = {
     "CONCLUSION": """In conclusion, USB is reporting {total_amount} in {activity_type} which gave the appearance of suspicious activity and were conducted by {subjects} in account number {account_number} from {start_date} through {end_date}. USB will conduct a follow-up review to monitor for continuing activity. All requests for supporting documentation can be sent to lawenforcementrequests@usbank.com referencing AML case number {case_number}."""
 }
 
-# Activity type definitions with indicators and derived_from values
+# Make sure ACTIVITY_TYPES is also defined
 ACTIVITY_TYPES = {
     "STRUCTURING": {
         "name": "structuring",

@@ -1,13 +1,15 @@
 import os
 import uuid
 import sys
-from flask import Flask, request, jsonify, send_file
-from flask_cors import CORS
+import re  # Added import at top of file
 import json
 import tempfile
 from datetime import datetime
 import logging
 from werkzeug.utils import secure_filename
+from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS
+
 
 # Add the parent directory to Python path so imports work
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -21,12 +23,26 @@ from backend.processors.excel_processor import ExcelProcessor
 from backend.processors.case_processor import CaseProcessor
 from backend.processors.data_validator import DataValidator
 from backend.generators.narrative_generator import NarrativeGenerator
+from backend.utils.json_utils import save_to_json_file, load_from_json_file
 
 # Set up logging
 logger = get_logger(__name__)
 
+#constants 
+VALID_SECTION_IDS = [
+    "introduction", 
+    "prior_cases", 
+    "account_info", 
+    "activity_summary", 
+    "conclusion", 
+    "subject_info", 
+    "transaction_samples"
+]
+
 # Initialize app
 app = Flask(__name__)
+
+
 
 # Configure Flask app directly with variables from config
 app.config['UPLOAD_FOLDER'] = config.UPLOAD_DIR  # Using UPLOAD_DIR from config
@@ -140,14 +156,13 @@ def generate_narrative():
         }
         
         # Save a copy of the processed data for later use
-        with open(os.path.join(upload_folder, 'data.json'), 'w') as f:
-            json.dump({
-                "case_data": case_data,
-                "excel_data": excel_data,
-                "combined_data": combined_data,
-                "narrative": narrative,
-                "sections": sections
-            }, f, default=str)  # Added default=str to handle datetime serialization
+        save_to_json_file({
+            "case_data": case_data,
+            "excel_data": excel_data,
+            "combined_data": combined_data,
+            "narrative": narrative,
+            "sections": sections
+        }, os.path.join(upload_folder, 'data.json'))
         
         return jsonify(response), 200
     
@@ -187,8 +202,7 @@ def get_sections(session_id):
         }), 404
     
     try:
-        with open(data_path, 'r') as f:
-            data = json.load(f)
+        data = load_from_json_file(data_path)
         
         return jsonify({
             "status": "success",
@@ -216,7 +230,7 @@ def update_section(session_id, section_id):
         }), 400
     
     # Validate section ID
-    if not section_id in ["introduction", "prior_cases", "account_info", "activity_summary", "conclusion"]:
+    if section_id not in VALID_SECTION_IDS:
         return jsonify({
             "status": "error",
             "message": "Invalid section ID"
@@ -238,8 +252,7 @@ def update_section(session_id, section_id):
         }), 400
     
     try:
-        with open(data_path, 'r') as f:
-            data = json.load(f)
+        data = load_from_json_file(data_path)
         
         # Update section content
         if section_id in data["sections"]:
@@ -284,7 +297,7 @@ def regenerate_section(session_id, section_id):
         }), 400
     
     # Validate section ID
-    if not section_id in ["introduction", "prior_cases", "account_info", "activity_summary", "conclusion"]:
+    if section_id not in VALID_SECTION_IDS:
         return jsonify({
             "status": "error",
             "message": "Invalid section ID"
@@ -299,8 +312,8 @@ def regenerate_section(session_id, section_id):
         }), 404
     
     try:
-        with open(data_path, 'r') as f:
-            data = json.load(f)
+        data = load_from_json_file(data_path)
+
         
         # Regenerate the specified section
         combined_data = data["combined_data"]
@@ -318,11 +331,10 @@ def regenerate_section(session_id, section_id):
             section_content = narrative_generator.generate_activity_summary()
         elif section_id == "conclusion":
             section_content = narrative_generator.generate_conclusion()
-        else:
-            return jsonify({
-                "status": "error",
-                "message": "Invalid section ID"
-            }), 400
+        elif section_id == "subject_info":
+            section_content = narrative_generator.generate_subject_info()
+        elif section_id == "transaction_samples":
+            section_content = narrative_generator.generate_transaction_samples()
         
         # Update section in data
         data["sections"][section_id]["content"] = section_content
@@ -372,9 +384,7 @@ def export_narrative(session_id):
         }), 404
     
     try:
-        with open(data_path, 'r') as f:
-            data = json.load(f)
-        
+        data = load_from_json_file(data_path)
         case_data = data["case_data"]
         narrative = data["narrative"]
         

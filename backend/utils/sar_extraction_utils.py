@@ -725,7 +725,7 @@ def format_currency(amount):
     # Convert string to float if needed
     if isinstance(amount, str):
         # Remove currency symbols and commas
-        amount = amount.replace(', '').replace(',', '')
+        amount = amount.replace(', ', '').replace(',', '')
         try:
             amount = float(amount)
         except ValueError:

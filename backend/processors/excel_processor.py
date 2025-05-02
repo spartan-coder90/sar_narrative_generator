@@ -7,9 +7,8 @@ from datetime import datetime
 import re
 from typing import Dict, List, Any, Optional
 import os
-
+from backend.utils.math_utils import safe_divide
 from backend.utils.logger import get_logger
-
 logger = get_logger(__name__)
 
 class ExcelProcessor:
@@ -43,6 +42,11 @@ class ExcelProcessor:
             bool: True if successful, False otherwise
         """
         try:
+            # Check if file exists first
+            if not os.path.exists(self.file_path):
+                logger.error(f"File does not exist: {self.file_path}")
+                return False
+                
             # Try to read all sheets in the workbook
             xlsx = pd.ExcelFile(self.file_path)
             sheet_names = xlsx.sheet_names
@@ -710,7 +714,7 @@ class ExcelProcessor:
             
             # Calculate percentages and build breakdown
             for txn_type, total in credit_totals.items():
-                percent = (total / summary["total_credits"] * 100) if summary["total_credits"] > 0 else 0
+                percent = safe_divide(total, summary["total_credits"], 0) * 100
                 summary["credit_breakdown"].append({
                     "type": txn_type,
                     "amount": total,
@@ -719,7 +723,7 @@ class ExcelProcessor:
                 })
             
             for txn_type, total in debit_totals.items():
-                percent = (total / summary["total_debits"] * 100) if summary["total_debits"] > 0 else 0
+                percent = safe_divide(total, summary["total_debits"], 0) * 100
                 summary["debit_breakdown"].append({
                     "type": txn_type,
                     "amount": total,

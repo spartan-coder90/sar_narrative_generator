@@ -54,31 +54,65 @@ class DataValidator:
         Returns:
             bool: True if valid, False otherwise
         """
-        alert_info = self.case_data.get("alert_info", {})
+        alert_info = self.case_data.get("alert_info", [])
         is_valid = True
         
-        # Check required fields
-        if not alert_info.get("alert_id", ""):
-            self.missing_required.append("Alert ID is missing")
-            is_valid = False
+        # Handle alert_info as either a list or a dictionary
+        if isinstance(alert_info, list):
+            # If it's a list, validate each alert individually
+            if not alert_info:
+                self.warnings.append("No alert information provided")
+            else:
+                # Validate the first alert (main alert)
+                first_alert = alert_info[0]
+                if not first_alert.get("alert_id", ""):
+                    self.missing_required.append("Alert ID is missing")
+                    is_valid = False
+                    
+                # Check review period format
+                review_period = first_alert.get("review_period", {})
+                start_date = review_period.get("start", "")
+                end_date = review_period.get("end", "")
+                
+                if not start_date or not end_date:
+                    self.warnings.append("Review period is incomplete")
+                else:
+                    # Check date format
+                    date_pattern = r"^\d{1,2}/\d{1,2}/\d{2,4}$"
+                    if not re.match(date_pattern, start_date):
+                        self.validation_errors.append(f"Review period start date format is invalid: {start_date}")
+                        is_valid = False
+                    
+                    if not re.match(date_pattern, end_date):
+                        self.validation_errors.append(f"Review period end date format is invalid: {end_date}")
+                        is_valid = False
         
-        # Check review period format
-        review_period = alert_info.get("review_period", {})
-        start_date = review_period.get("start", "")
-        end_date = review_period.get("end", "")
-        
-        if not start_date or not end_date:
-            self.warnings.append("Review period is incomplete")
-        else:
-            # Check date format
-            date_pattern = r"^\d{1,2}/\d{1,2}/\d{2,4}$"
-            if not re.match(date_pattern, start_date):
-                self.validation_errors.append(f"Review period start date format is invalid: {start_date}")
+        elif isinstance(alert_info, dict):
+            # Original code for handling alert_info as a dictionary
+            if not alert_info.get("alert_id", ""):
+                self.missing_required.append("Alert ID is missing")
                 is_valid = False
             
-            if not re.match(date_pattern, end_date):
-                self.validation_errors.append(f"Review period end date format is invalid: {end_date}")
-                is_valid = False
+            # Check review period format
+            review_period = alert_info.get("review_period", {})
+            start_date = review_period.get("start", "")
+            end_date = review_period.get("end", "")
+            
+            if not start_date or not end_date:
+                self.warnings.append("Review period is incomplete")
+            else:
+                # Check date format
+                date_pattern = r"^\d{1,2}/\d{1,2}/\d{2,4}$"
+                if not re.match(date_pattern, start_date):
+                    self.validation_errors.append(f"Review period start date format is invalid: {start_date}")
+                    is_valid = False
+                
+                if not re.match(date_pattern, end_date):
+                    self.validation_errors.append(f"Review period end date format is invalid: {end_date}")
+                    is_valid = False
+        else:
+            self.missing_required.append("Alert information is missing or invalid format")
+            is_valid = False
         
         return is_valid
     

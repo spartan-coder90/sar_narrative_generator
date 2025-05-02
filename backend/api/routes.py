@@ -45,14 +45,14 @@ def generate_narrative():
     - errors: Any errors during processing
     """
     # Check if files were uploaded
-    if 'case_file' not in request.files or 'excel_file' not in request.files:
+    if 'caseFile' not in request.files or 'excelFile' not in request.files:
         return jsonify({
             "status": "error",
-            "message": "Both case_file and excel_file are required"
+            "message": "Both caseFile and excelFile are required"
         }), 400
     
-    case_file = request.files['case_file']
-    excel_file = request.files['excel_file']
+    case_file = request.files['caseFile']
+    excel_file = request.files['excelFile']
     
     # Check if files are empty
     if case_file.filename == '' or excel_file.filename == '':

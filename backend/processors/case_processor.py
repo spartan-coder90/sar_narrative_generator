@@ -41,6 +41,11 @@ class CaseProcessor:
             bool: True if successful, False otherwise
         """
         try:
+            # Check if file exists first
+            if not os.path.exists(self.file_path):
+                logger.error(f"File does not exist: {self.file_path}")
+                return False
+                
             file_ext = os.path.splitext(self.file_path)[1].lower()
             
             if file_ext == '.json':

@@ -149,7 +149,7 @@ class NarrativeGenerator:
             Dict: Formatted data for introduction section
         """
         # Get required data
-        activity_type = self.determine_activity_type()
+        activity_type = self.determine_activity_type() or {}
         account_info = self.data.get("account_info", {})
         activity_summary = self.data.get("activity_summary", {})
         
@@ -157,6 +157,8 @@ class NarrativeGenerator:
         alert_info = self.data.get("alert_info", [])
         if isinstance(alert_info, list) and alert_info:
             alert_info = alert_info[0]  # Use the first alert
+        elif not isinstance(alert_info, dict):
+            alert_info = {}
         
         # Get review period
         review_period = self.data.get("review_period", {})
@@ -206,7 +208,7 @@ class NarrativeGenerator:
             
             # Fall back to LLM as a second option
             return self.llm_client.generate_section("introduction", template_vars) or \
-                   f"U.S. Bank National Association (USB), is filing this Suspicious Activity Report (SAR) to report {template_vars['activity_type']} totaling {template_vars['total_amount']} {template_vars['derived_from']} by {template_vars['subjects']} in {template_vars['account_type']} account number {template_vars['account_number']}. The suspicious activity was conducted from {template_vars['start_date']} through {template_vars['end_date']}."
+                f"U.S. Bank National Association (USB), is filing this Suspicious Activity Report (SAR) to report {template_vars['activity_type']} totaling {template_vars['total_amount']} {template_vars['derived_from']} by {template_vars['subjects']} in {template_vars['account_type']} account number {template_vars['account_number']}. The suspicious activity was conducted from {template_vars['start_date']} through {template_vars['end_date']}."
     
     def prepare_prior_cases_data(self) -> Dict[str, Any]:
         """

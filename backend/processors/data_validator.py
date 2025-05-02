@@ -4,6 +4,7 @@ Data validator for validating extracted data
 from typing import Dict, List, Any, Optional, Tuple
 import re
 from datetime import datetime
+from backend.utils.sar_extraction_utils import extract_case_number, extract_subjects
 
 from backend.utils.logger import get_logger
 

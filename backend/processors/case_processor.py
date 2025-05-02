@@ -6,7 +6,7 @@ import json
 import os
 from typing import Dict, List, Any, Optional
 from datetime import datetime
-
+from backend.utils.sar_extraction_utils import extract_case_number, extract_subjects
 from backend.utils.logger import get_logger
 
 logger = get_logger(__name__)

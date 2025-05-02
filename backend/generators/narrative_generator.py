@@ -1,9 +1,10 @@
 """
-SAR Narrative Generator
+Enhanced SAR Narrative Generator with template-first approach, minimizing LLM usage
 """
 from typing import Dict, List, Any, Optional
 import re
 from datetime import datetime
+import json
 
 from backend.utils.logger import get_logger
 from backend.config import TEMPLATES, ACTIVITY_TYPES
@@ -36,7 +37,7 @@ class NarrativeGenerator:
         if self.activity_type:
             return self.activity_type
         
-        # Use LLM to determine activity type
+        # Use the LLM client's method to determine activity type
         self.activity_type = self.llm_client.determine_activity_type(self.data)
         return self.activity_type
     
@@ -140,6 +141,53 @@ class NarrativeGenerator:
         else:
             return ", ".join(formatted_subjects[:-1]) + f", and {formatted_subjects[-1]}"
     
+    def prepare_introduction_data(self) -> Dict[str, Any]:
+        """
+        Prepare data for the introduction section
+        
+        Returns:
+            Dict: Formatted data for introduction section
+        """
+        # Get required data
+        activity_type = self.determine_activity_type()
+        account_info = self.data.get("account_info", {})
+        activity_summary = self.data.get("activity_summary", {})
+        
+        # Determine alert information
+        alert_info = self.data.get("alert_info", [])
+        if isinstance(alert_info, list) and alert_info:
+            alert_info = alert_info[0]  # Use the first alert
+        
+        # Get review period
+        review_period = self.data.get("review_period", {})
+        start_date = self.format_date(
+            activity_summary.get("start_date") or 
+            (review_period.get("start") if isinstance(review_period, dict) else "") or
+            (alert_info.get("review_period", {}).get("start") if isinstance(alert_info, dict) else "")
+        )
+        end_date = self.format_date(
+            activity_summary.get("end_date") or 
+            (review_period.get("end") if isinstance(review_period, dict) else "") or
+            (alert_info.get("review_period", {}).get("end") if isinstance(alert_info, dict) else "")
+        )
+        
+        # Get total amount
+        total_amount = activity_summary.get("total_amount", 0)
+        if not total_amount and self.data.get("transaction_summary"):
+            total_amount = self.data["transaction_summary"].get("total_credits", 0)
+        
+        # Prepare data for template or LLM
+        return {
+            "activity_type": activity_type.get("name", "suspicious activity"),
+            "total_amount": self.format_currency(total_amount),
+            "derived_from": activity_type.get("derived_from", ""),
+            "subjects": self.format_subject_list(),
+            "account_type": account_info.get("account_type", "checking/savings"),
+            "account_number": account_info.get("account_number", ""),
+            "start_date": start_date,
+            "end_date": end_date
+        }
+    
     def generate_introduction(self) -> str:
         """
         Generate introduction section
@@ -147,33 +195,37 @@ class NarrativeGenerator:
         Returns:
             str: Introduction section
         """
-        # Get required data
-        activity_type = self.determine_activity_type()
-        account_info = self.data.get("account_info", {})
-        activity_summary = self.data.get("activity_summary", {})
-        alert_info = self.data.get("alert_info", {})
+        # Get formatted data
+        template_vars = self.prepare_introduction_data()
         
-        # Format template variables
-        template_vars = {
-            "activity_type": activity_type.get("name", "suspicious activity"),
-            "total_amount": self.format_currency(activity_summary.get("total_amount", 0)),
-            "derived_from": activity_type.get("derived_from", ""),
-            "subjects": self.format_subject_list(),
-            "account_type": account_info.get("account_type", "checking/savings"),
-            "account_number": account_info.get("account_number", ""),
-            "start_date": self.format_date(activity_summary.get("start_date") or alert_info.get("review_period", {}).get("start")),
-            "end_date": self.format_date(activity_summary.get("end_date") or alert_info.get("review_period", {}).get("end"))
-        }
-        
+        # Try template formatting first
         try:
             return TEMPLATES["INTRODUCTION"].format(**template_vars)
         except KeyError as e:
-            logger.error(f"Missing key in introduction template: {e}")
-            # Use LLM to generate if template formatting fails
-            return self.llm_client.generate_narrative(
-                "Generate the introduction section for a SAR narrative using this data:\n{template_vars}",
-                {"template_vars": str(template_vars)}
-            )
+            logger.warning(f"Missing key in introduction template: {e}")
+            
+            # Fall back to LLM as a second option
+            return self.llm_client.generate_section("introduction", template_vars) or \
+                   f"U.S. Bank National Association (USB), is filing this Suspicious Activity Report (SAR) to report {template_vars['activity_type']} totaling {template_vars['total_amount']} {template_vars['derived_from']} by {template_vars['subjects']} in {template_vars['account_type']} account number {template_vars['account_number']}. The suspicious activity was conducted from {template_vars['start_date']} through {template_vars['end_date']}."
+    
+    def prepare_prior_cases_data(self) -> Dict[str, Any]:
+        """
+        Prepare data for the prior cases section
+        
+        Returns:
+            Dict: Formatted data for prior cases section
+        """
+        prior_cases = self.data.get("prior_cases", [])
+        
+        if not prior_cases:
+            return {"prior_cases_text": "No prior SARs were identified for the subjects or account."}
+        
+        prior_cases_text = []
+        for case in prior_cases:
+            case_text = f"Prior SAR (Case Number: {case.get('case_number', '')}) was filed on {self.format_date(case.get('filing_date', ''))} reporting {case.get('summary', 'suspicious activity')}."
+            prior_cases_text.append(case_text)
+        
+        return {"prior_cases_text": " ".join(prior_cases_text)}
     
     def generate_prior_cases(self) -> str:
         """
@@ -199,12 +251,37 @@ class NarrativeGenerator:
                 case_text = TEMPLATES["PRIOR_CASES"].format(**template_vars)
                 prior_cases_text.append(case_text)
             except KeyError as e:
-                logger.error(f"Missing key in prior cases template: {e}")
-                # Use simpler format if template fails
-                case_text = f"Prior SAR ({case.get('case_number', 'unknown')}) was filed on {self.format_date(case.get('filing_date', ''))}."
+                logger.warning(f"Missing key in prior cases template: {e}")
+                case_text = f"Prior SAR (Case Number: {template_vars['prior_case_number']}) was filed on {template_vars['prior_filing_date']} reporting {template_vars['prior_description']}."
                 prior_cases_text.append(case_text)
         
+        # If template formatting failed, try LLM
+        if not prior_cases_text:
+            data = self.prepare_prior_cases_data()
+            llm_result = self.llm_client.generate_section("prior_cases", data)
+            return llm_result if llm_result else data["prior_cases_text"]
+            
         return " ".join(prior_cases_text)
+    
+    def prepare_account_info_data(self) -> Dict[str, Any]:
+        """
+        Prepare data for the account information section
+        
+        Returns:
+            Dict: Formatted data for account info section
+        """
+        account_info = self.data.get("account_info", {})
+        
+        return {
+            "account_type": account_info.get("account_type", "checking/savings"),
+            "account_number": account_info.get("account_number", ""),
+            "open_date": self.format_date(account_info.get("open_date", "")),
+            "close_date": self.format_date(account_info.get("close_date", "")),
+            "account_status": "closed" if account_info.get("status", "").upper() == "CLOSED" else "remains open",
+            "closure_reason": account_info.get("closure_reason", "suspicious activity"),
+            "funds_destination": account_info.get("funds_destination", "unknown"),
+            "transfer_date": self.format_date(account_info.get("transfer_date", ""))
+        }
     
     def generate_account_info(self) -> str:
         """
@@ -213,131 +290,237 @@ class NarrativeGenerator:
         Returns:
             str: Account information section
         """
-        account_info = self.data.get("account_info", {})
-        
-        # Format template variables
-        template_vars = {
-            "account_type": account_info.get("account_type", "checking/savings"),
-            "account_number": account_info.get("account_number", ""),
-            "open_date": self.format_date(account_info.get("open_date", "")),
-            "close_date": self.format_date(account_info.get("close_date", "")),
-            "account_status": "closed" if account_info.get("status") == "CLOSED" else "remains open",
-            "closure_reason": account_info.get("closure_reason", "suspicious activity"),
-            "funds_destination": account_info.get("funds_destination", "unknown"),
-            "transfer_date": self.format_date(account_info.get("transfer_date", ""))
-        }
+        template_vars = self.prepare_account_info_data()
         
         try:
-            # If account is open or closure details are missing, modify template
-            if account_info.get("status") != "CLOSED" or not account_info.get("close_date"):
-                # Simple version for open accounts
+            # If account is open or closure details are missing, use a simple template
+            if template_vars["account_status"] != "closed" or not template_vars["close_date"]:
                 return f"Personal {template_vars['account_type']} account {template_vars['account_number']} was opened on {template_vars['open_date']} and remains open."
             
+            # Otherwise use the full template
             return TEMPLATES["ACCOUNT_INFO"].format(**template_vars)
         except KeyError as e:
-            logger.error(f"Missing key in account info template: {e}")
-            # Use LLM to generate if template formatting fails
-            return self.llm_client.generate_narrative(
-                "Generate the account information section for a SAR narrative using this data:\n{template_vars}",
-                {"template_vars": str(template_vars)}
-            )
-    
-    def generate_multi_account_section(self) -> str:
-        """
-        Generate section summarizing activity across multiple accounts
-        
-        Returns:
-            str: Multi-account activity section
-        """
-        account_summaries = self.data.get("account_summaries", {})
-        transfers = self.data.get("inter_account_transfers", [])
-        
-        # If we only have one account, skip this section
-        if len(account_summaries) <= 1:
-            return ""
-        
-        # Generate summary of multi-account activity
-        section = f"This investigation reviewed activity across {len(account_summaries)} related accounts. "
-        
-        # Add summary of each account
-        for account_number, summary in account_summaries.items():
-            credits = self.format_currency(summary.get("total_credits", 0))
-            debits = self.format_currency(summary.get("total_debits", 0))
-            txn_count = summary.get("transaction_count", 0)
+            logger.warning(f"Missing key in account info template: {e}")
             
-            section += f"Account {account_number} had {credits} in total credits and {debits} in total debits across {txn_count} transactions. "
-        
-        # Add brief summary of transfers between accounts
-        internal_transfers = [t for t in transfers if t.get("to_account") != "external"]
-        if internal_transfers:
-            total_transfer_amount = sum(t.get('amount', 0) for t in internal_transfers)
-            section += f"There were {len(internal_transfers)} transfers between related accounts totaling {self.format_currency(total_transfer_amount)}. "
-        
-        return section
-
-    def generate_activity_summary(self) -> str:
+            # Fall back to LLM or a simple default
+            return self.llm_client.generate_section("account_info", template_vars) or \
+                   f"Personal {template_vars['account_type']} account {template_vars['account_number']} was opened on {template_vars['open_date']} and {template_vars['account_status']}."
+    
+    def prepare_subject_info_data(self) -> List[Dict[str, Any]]:
         """
-        Generate factual activity summary section
+        Prepare data for subject information
         
         Returns:
-            str: Activity summary section
+            List[Dict]: List of formatted subject data
+        """
+        subjects = self.data.get("subjects", [])
+        formatted_subjects = []
+        
+        for subject in subjects:
+            formatted_subjects.append({
+                "name": subject.get("name", "unknown subject"),
+                "occupation": subject.get("occupation", ""),
+                "employer": subject.get("employer", ""),
+                "relationship": subject.get("account_relationship", ""),
+                "is_primary": subject.get("is_primary", False),
+                "address": subject.get("address", "")
+            })
+            
+        return formatted_subjects
+    
+    def generate_subject_info(self) -> str:
+        """
+        Generate subject information section
+        
+        Returns:
+            str: Subject information section
+        """
+        formatted_subjects = self.prepare_subject_info_data()
+        
+        if not formatted_subjects:
+            return "No subject information is available."
+        
+        subject_paragraphs = []
+        
+        for subject in formatted_subjects:
+            name = subject["name"]
+            occupation = subject["occupation"]
+            employer = subject["employer"]
+            relationship = subject["relationship"]
+            
+            # Create basic subject description
+            subject_info = f"{name}"
+            if occupation or employer:
+                subject_info += f" is employed as a {occupation}" if occupation else ""
+                subject_info += f" at {employer}" if employer else ""
+                subject_info += "."
+            
+            if relationship:
+                subject_info += f" {name} is listed as {relationship} on the account."
+            
+            subject_paragraphs.append(subject_info)
+        
+        return " ".join(subject_paragraphs)
+    
+    def prepare_activity_data(self) -> Dict[str, Any]:
+        """
+        Prepare transaction and activity data
+        
+        Returns:
+            Dict: Formatted activity data
         """
         account_info = self.data.get("account_info", {})
         activity_summary = self.data.get("activity_summary", {})
         transaction_summary = self.data.get("transaction_summary", {})
         
-        # Format activity description using data from calculations
+        # Get activity dates
+        start_date = self.format_date(activity_summary.get("start_date", ""))
+        end_date = self.format_date(activity_summary.get("end_date", ""))
+        
+        # Create activity description
         activity_description = ""
         
-        # Add information about transaction breakdown
+        # Add credit breakdown info
         if transaction_summary.get("credit_breakdown"):
             top_credits = transaction_summary["credit_breakdown"][:3]  # Top 3 credit types
             credit_types = ", ".join([
-                f"{item['type']} (${item['amount']:.2f}, {item['count']} transactions, {item['percent']:.1f}%)" 
+                f"{item['type']} ({self.format_currency(item['amount'])}, {item['count']} transactions)"
                 for item in top_credits
             ])
             activity_description += f"The primary credit transaction types were {credit_types}. "
         
+        # Add debit breakdown info
         if transaction_summary.get("debit_breakdown"):
             top_debits = transaction_summary["debit_breakdown"][:3]  # Top 3 debit types
             debit_types = ", ".join([
-                f"{item['type']} (${item['amount']:.2f}, {item['count']} transactions, {item['percent']:.1f}%)" 
+                f"{item['type']} ({self.format_currency(item['amount'])}, {item['count']} transactions)" 
                 for item in top_debits
             ])
             activity_description += f"The primary debit transaction types were {debit_types}. "
         
-        # Add multi-account section if applicable
-        multi_account_section = self.generate_multi_account_section()
-        if multi_account_section:
-            activity_description += multi_account_section
+        # Get transaction samples
+        unusual_activity = self.data.get("unusual_activity", {})
+        samples = []
         
-        # Get total amounts
-        total_credits = transaction_summary.get("total_credits", 0)
-        total_debits = transaction_summary.get("total_debits", 0)
+        if unusual_activity and unusual_activity.get("transactions"):
+            for txn in unusual_activity["transactions"][:3]:  # Top 3 transactions
+                date = self.format_date(txn.get("date", ""))
+                amount = self.format_currency(txn.get("amount", 0))
+                txn_type = txn.get("type", "")
+                
+                samples.append({
+                    "date": date,
+                    "amount": amount,
+                    "type": txn_type
+                })
         
-        # Format template variables
-        template_vars = {
+        # Get AML risks
+        activity_type = self.determine_activity_type()
+        aml_risks = ", ".join(activity_type.get("indicators", ["suspicious transactions"]))
+        
+        return {
             "account_number": account_info.get("account_number", ""),
-            "start_date": self.format_date(activity_summary.get("start_date", "")),
-            "end_date": self.format_date(activity_summary.get("end_date", "")),
+            "start_date": start_date,
+            "end_date": end_date,
             "activity_description": activity_description,
-            "total_credits": self.format_currency(total_credits),
-            "total_debits": self.format_currency(total_debits)
+            "total_credits": self.format_currency(transaction_summary.get("total_credits", 0)),
+            "total_debits": self.format_currency(transaction_summary.get("total_debits", 0)),
+            "aml_risks": aml_risks,
+            "transaction_samples": samples
         }
+    
+    def generate_activity_summary(self) -> str:
+        """
+        Generate activity summary section
         
-        # Simple template to summarize activity without analysis
-        factual_template = """The account activity for {account_number} from {start_date} to {end_date} included total credits of {total_credits} and total debits of {total_debits}. {activity_description}"""
+        Returns:
+            str: Activity summary section
+        """
+        template_vars = self.prepare_activity_data()
+        
+        # Activity summary template
+        activity_template = """The account activity for {account_number} from {start_date} to {end_date} included total credits of {total_credits} and total debits of {total_debits}. {activity_description}The AML risks associated with these transactions are as follows: {aml_risks}."""
         
         try:
-            return factual_template.format(**template_vars)
+            return activity_template.format(**template_vars)
         except KeyError as e:
-            logger.error(f"Missing key in activity summary template: {e}")
-            # Use LLM only if formatting fails
-            return self.llm_client.generate_narrative(
-                "Generate a factual summary of account activity using this data:\n{template_vars}",
-                {"template_vars": str(template_vars)}
-            )
-
+            logger.warning(f"Missing key in activity summary template: {e}")
+            
+            # Fall back to LLM or a simple default
+            return self.llm_client.generate_section("activity_summary", template_vars) or \
+                   f"The account activity for {template_vars['account_number']} from {template_vars['start_date']} to {template_vars['end_date']} included total credits of {template_vars['total_credits']} and total debits of {template_vars['total_debits']}."
+    
+    def generate_transaction_samples(self) -> str:
+        """
+        Generate a section with transaction samples
+        
+        Returns:
+            str: Transaction samples section
+        """
+        unusual_activity = self.data.get("unusual_activity", {})
+        
+        if not unusual_activity or not unusual_activity.get("transactions"):
+            return ""
+        
+        # Get up to 5 transactions to showcase
+        transactions = unusual_activity.get("transactions", [])
+        sample_count = min(5, len(transactions))
+        
+        # Format sample list
+        sample_text = "A sample of the suspicious transactions includes:"
+        
+        for i, txn in enumerate(transactions[:sample_count]):
+            date = self.format_date(txn.get("date", ""))
+            amount = self.format_currency(txn.get("amount", 0))
+            txn_type = txn.get("type", "")
+            desc = txn.get("description", "")
+            
+            sample_text += f" {date}: {amount}"
+            if txn_type:
+                sample_text += f" ({txn_type})"
+            if desc:
+                sample_text += f" - {desc}"
+            
+            if i < sample_count - 1:
+                sample_text += ";"
+            else:
+                sample_text += "."
+        
+        return sample_text
+    
+    def prepare_conclusion_data(self) -> Dict[str, Any]:
+        """
+        Prepare data for conclusion section
+        
+        Returns:
+            Dict: Formatted data for conclusion
+        """
+        activity_type = self.determine_activity_type()
+        account_info = self.data.get("account_info", {})
+        activity_summary = self.data.get("activity_summary", {})
+        review_period = self.data.get("review_period", {})
+        
+        # Get start and end dates
+        start_date = self.format_date(
+            activity_summary.get("start_date") or 
+            (review_period.get("start") if isinstance(review_period, dict) else "")
+        )
+        
+        end_date = self.format_date(
+            activity_summary.get("end_date") or 
+            (review_period.get("end") if isinstance(review_period, dict) else "")
+        )
+        
+        return {
+            "case_number": self.data.get("case_number", ""),
+            "activity_type": activity_type.get("name", "suspicious activity"),
+            "total_amount": self.format_currency(activity_summary.get("total_amount", 0)),
+            "subjects": self.format_subject_list(include_relationship=False),
+            "account_number": account_info.get("account_number", ""),
+            "start_date": start_date,
+            "end_date": end_date
+        }
+    
     def generate_conclusion(self) -> str:
         """
         Generate conclusion section
@@ -345,17 +528,19 @@ class NarrativeGenerator:
         Returns:
             str: Conclusion section
         """
-        # Format template variables
-        template_vars = {
-            "case_number": self.data.get("case_number", "")
-        }
+        template_vars = self.prepare_conclusion_data()
+        
+        # Custom conclusion template
+        conclusion_template = """In conclusion, USB is reporting {total_amount} in {activity_type} which gave the appearance of suspicious activity and were conducted by {subjects} in account number {account_number} from {start_date} through {end_date}. USB will conduct a follow-up review to monitor for continuing activity. All requests for supporting documentation can be sent to lawenforcementrequests@usbank.com referencing AML case number {case_number}."""
         
         try:
-            return TEMPLATES["CONCLUSION"].format(**template_vars)
+            return conclusion_template.format(**template_vars)
         except KeyError as e:
-            logger.error(f"Missing key in conclusion template: {e}")
-            # Use simple conclusion if template formatting fails
-            return f"In conclusion, USB will conduct a follow-up review to monitor for continuing activity. All requests for supporting documentation can be sent to lawenforcementrequests@usbank.com referencing AML case number {template_vars['case_number']}."
+            logger.warning(f"Missing key in conclusion template: {e}")
+            
+            # Fall back to LLM or a simple default
+            return self.llm_client.generate_section("conclusion", template_vars) or \
+                   f"In conclusion, USB will conduct a follow-up review to monitor for continuing activity. All requests for supporting documentation can be sent to lawenforcementrequests@usbank.com referencing AML case number {template_vars['case_number']}."
     
     def generate_narrative(self) -> str:
         """
@@ -368,9 +553,14 @@ class NarrativeGenerator:
             self.generate_introduction(),
             self.generate_prior_cases(),
             self.generate_account_info(),
+            self.generate_subject_info(),
             self.generate_activity_summary(),
+            self.generate_transaction_samples(),
             self.generate_conclusion()
         ]
+        
+        # Filter out empty sections
+        sections = [section for section in sections if section]
         
         # Combine sections
         narrative = "\n\n".join(sections)
@@ -379,8 +569,45 @@ class NarrativeGenerator:
     
     def generate_with_llm(self) -> str:
         """
-        Generate complete SAR narrative using LLM
+        Generate complete SAR narrative using LLM in a minimized way
         
         Returns:
             str: Complete SAR narrative
         """
+        # Generate each section separately
+        intro_data = self.prepare_introduction_data()
+        prior_cases_data = self.prepare_prior_cases_data()
+        account_info_data = self.prepare_account_info_data()
+        activity_data = self.prepare_activity_data()
+        conclusion_data = self.prepare_conclusion_data()
+        
+        # Generate each section using the LLM
+        intro = self.llm_client.generate_section("introduction", intro_data)
+        prior_cases = self.llm_client.generate_section("prior_cases", prior_cases_data)
+        account_info = self.llm_client.generate_section("account_info", account_info_data)
+        activity_summary = self.llm_client.generate_section("activity_summary", activity_data)
+        conclusion = self.llm_client.generate_section("conclusion", conclusion_data)
+        
+        # If any section failed, use the template-based approach
+        if not intro or not conclusion:
+            logger.warning("LLM generation failed for critical sections, falling back to template approach")
+            return self.generate_narrative()
+        
+        # Combine sections
+        sections = [
+            intro,
+            prior_cases,
+            account_info,
+            self.generate_subject_info(),  # Use template-based subject info
+            activity_summary,
+            self.generate_transaction_samples(),  # Use template-based transaction samples
+            conclusion
+        ]
+        
+        # Filter out empty sections
+        sections = [section for section in sections if section]
+        
+        # Combine sections
+        narrative = "\n\n".join(sections)
+        
+        return narrative

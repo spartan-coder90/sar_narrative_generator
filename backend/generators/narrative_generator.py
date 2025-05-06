@@ -1,5 +1,5 @@
 """
-Enhanced SAR Narrative Generator with template-first approach, minimizing LLM usage
+Enhanced SAR Narrative Generator with updated template structure for AML/Fraud requirements
 """
 from typing import Dict, List, Any, Optional
 import re
@@ -7,7 +7,7 @@ from datetime import datetime
 import json
 
 from backend.utils.logger import get_logger
-from backend.config import TEMPLATES, ACTIVITY_TYPES
+from backend.config import TEMPLATES, ACTIVITY_TYPES, SAR_TEMPLATE, AML_RISK_INDICATORS
 from backend.integrations.llm_client import LLMClient
 
 logger = get_logger(__name__)
@@ -200,9 +200,12 @@ class NarrativeGenerator:
         # Get formatted data
         template_vars = self.prepare_introduction_data()
         
+        # Use the SAR_TEMPLATE format from config
+        template = SAR_TEMPLATE["SAR_NARRATIVE"]["INTRODUCTION"]
+        
         # Try template formatting first
         try:
-            return TEMPLATES["INTRODUCTION"].format(**template_vars)
+            return template.format(**template_vars)
         except KeyError as e:
             logger.warning(f"Missing key in introduction template: {e}")
             
@@ -241,6 +244,9 @@ class NarrativeGenerator:
         if not prior_cases:
             return "No prior SARs were identified for the subjects or account."
         
+        # Use the SAR_TEMPLATE format for prior cases
+        template = TEMPLATES["PRIOR_CASES"]
+        
         prior_cases_text = []
         for case in prior_cases:
             template_vars = {
@@ -250,7 +256,7 @@ class NarrativeGenerator:
             }
             
             try:
-                case_text = TEMPLATES["PRIOR_CASES"].format(**template_vars)
+                case_text = template.format(**template_vars)
                 prior_cases_text.append(case_text)
             except KeyError as e:
                 logger.warning(f"Missing key in prior cases template: {e}")
@@ -294,6 +300,7 @@ class NarrativeGenerator:
         """
         template_vars = self.prepare_account_info_data()
         
+        # Use appropriate template from SAR_TEMPLATE
         try:
             # If account is open or closure details are missing, use a simple template
             if template_vars["account_status"] != "closed" or not template_vars["close_date"]:
@@ -350,17 +357,33 @@ class NarrativeGenerator:
             employer = subject["employer"]
             relationship = subject["relationship"]
             
-            # Create basic subject description
-            subject_info = f"{name}"
-            if occupation or employer:
-                subject_info += f" is employed as a {occupation}" if occupation else ""
-                subject_info += f" at {employer}" if employer else ""
-                subject_info += "."
-            
-            if relationship:
-                subject_info += f" {name} is listed as {relationship} on the account."
-            
-            subject_paragraphs.append(subject_info)
+            # Create basic subject description using the template
+            try:
+                if occupation or employer:
+                    template_vars = {
+                        "name": name,
+                        "occupation": occupation or "unknown occupation", 
+                        "employer": employer or "unknown employer",
+                        "relationship": relationship or "account holder"
+                    }
+                    subject_info = TEMPLATES["SUBJECT_INFO"].format(**template_vars)
+                else:
+                    subject_info = f"{name} is listed as {relationship or 'an account holder'} on the account."
+                
+                subject_paragraphs.append(subject_info)
+            except KeyError as e:
+                logger.warning(f"Missing key in subject info template: {e}")
+                # Fallback to basic format
+                subject_info = f"{name}"
+                if occupation or employer:
+                    subject_info += f" is employed as a {occupation}" if occupation else ""
+                    subject_info += f" at {employer}" if employer else ""
+                    subject_info += "."
+                
+                if relationship:
+                    subject_info += f" {name} is listed as {relationship} on the account."
+                
+                subject_paragraphs.append(subject_info)
         
         return " ".join(subject_paragraphs)
     
@@ -416,7 +439,7 @@ class NarrativeGenerator:
                     "type": txn_type
                 })
         
-        # Get AML risks
+        # Get AML risks based on detected activity type
         activity_type = self.determine_activity_type()
         aml_risks = ", ".join(activity_type.get("indicators", ["suspicious transactions"]))
         
@@ -440,11 +463,9 @@ class NarrativeGenerator:
         """
         template_vars = self.prepare_activity_data()
         
-        # Activity summary template
-        activity_template = """The account activity for {account_number} from {start_date} to {end_date} included total credits of {total_credits} and total debits of {total_debits}. {activity_description}The AML risks associated with these transactions are as follows: {aml_risks}."""
-        
+        # Use template from SAR_TEMPLATE
         try:
-            return activity_template.format(**template_vars)
+            return TEMPLATES["ACTIVITY_SUMMARY"].format(**template_vars)
         except KeyError as e:
             logger.warning(f"Missing key in activity summary template: {e}")
             
@@ -516,8 +537,11 @@ class NarrativeGenerator:
         return {
             "case_number": self.data.get("case_number", ""),
             "activity_type": activity_type.get("name", "suspicious activity"),
-            "total_amount": self.format_currency(activity_summary.get("total_amount", 0)),
+            "activity_appearance": activity_type.get("name", "suspicious activity"),
+            "total_amount": activity_summary.get("total_amount", 0),
             "subjects": self.format_subject_list(include_relationship=False),
+            "subject_name": self.format_subject_list(include_relationship=False),
+            "account_type": account_info.get("account_type", "checking/savings"),
             "account_number": account_info.get("account_number", ""),
             "start_date": start_date,
             "end_date": end_date
@@ -532,8 +556,11 @@ class NarrativeGenerator:
         """
         template_vars = self.prepare_conclusion_data()
         
-        # Custom conclusion template
-        conclusion_template = """In conclusion, USB is reporting {total_amount} in {activity_type} which gave the appearance of suspicious activity and were conducted by {subjects} in account number {account_number} from {start_date} through {end_date}. USB will conduct a follow-up review to monitor for continuing activity. All requests for supporting documentation can be sent to lawenforcementrequests@usbank.com referencing AML case number {case_number}."""
+        # Format currency value
+        template_vars["total_amount"] = self.format_currency(template_vars["total_amount"]).replace("$", "")
+        
+        # Use the SAR_TEMPLATE conclusion format
+        conclusion_template = SAR_TEMPLATE["SAR_NARRATIVE"]["CONCLUSION"]
         
         try:
             return conclusion_template.format(**template_vars)
@@ -542,7 +569,7 @@ class NarrativeGenerator:
             
             # Fall back to LLM or a simple default
             return self.llm_client.generate_section("conclusion", template_vars) or \
-                   f"In conclusion, USB will conduct a follow-up review to monitor for continuing activity. All requests for supporting documentation can be sent to lawenforcementrequests@usbank.com referencing AML case number {template_vars['case_number']}."
+                   f"In conclusion, USB is reporting ${template_vars['total_amount']} in {template_vars['activity_type']} which gave the appearance of suspicious activity and were conducted by {template_vars['subjects']} in account number {template_vars['account_number']} from {template_vars['start_date']} through {template_vars['end_date']}. USB will conduct a follow-up review to monitor for continuing activity. All requests for supporting documentation can be sent to lawenforcementrequests@usbank.com referencing AML case number {template_vars['case_number']}."
     
     def generate_narrative(self) -> str:
         """
@@ -568,6 +595,158 @@ class NarrativeGenerator:
         narrative = "\n\n".join(sections)
         
         return narrative
+    
+    def generate_recommendation(self) -> Dict[str, str]:
+        """
+        Generate SAR recommendation sections
+        
+        Returns:
+            Dict[str, str]: Dictionary of recommendation sections
+        """
+        # Prepare template variables
+        case_data = self.data
+        alert_info = case_data.get("alert_info", [])
+        if isinstance(alert_info, list) and alert_info:
+            alert_info = alert_info[0]
+        
+        activity_type = self.determine_activity_type()
+        account_info = case_data.get("account_info", {})
+        activity_summary = self.data.get("activity_summary", {})
+        
+        # Format alerting activity
+        account_types = account_info.get("account_type", "checking/savings")
+        account_number = account_info.get("account_number", "")
+        alerting_months = alert_info.get("alert_month", "") if isinstance(alert_info, dict) else ""
+        alerting_description = alert_info.get("description", "") if isinstance(alert_info, dict) else ""
+        
+        alerting_vars = {
+            "case_number": case_data.get("case_number", ""),
+            "alerting_account_types": account_types,
+            "alerting_account_numbers": account_number,
+            "alerting_months": alerting_months,
+            "alerting_description": alerting_description
+        }
+        
+        # Format prior SARs
+        prior_cases = case_data.get("prior_cases", [])
+        if prior_cases:
+            prior_sar_content = self.generate_prior_cases()
+        else:
+            prior_sar_content = "No prior SARs were identified for the subjects or account."
+        
+        # Format scope of review
+        review_period = case_data.get("review_period", {})
+        review_start = self.format_date(review_period.get("start", ""))
+        review_end = self.format_date(review_period.get("end", ""))
+        
+        # Format conclusion
+        conclusion_vars = {
+            "unusual_activity_types": activity_type.get("name", "suspicious activity"),
+            "unusual_activity_usb_accounts": account_info.get("account_number", ""),
+            "sar_subjects": self.format_subject_list(include_relationship=False),
+            "unusual_activity_total": self.format_currency(activity_summary.get("total_amount", 0)),
+            "derived_from": activity_type.get("derived_from", "derived from credits and debits"),
+            "unusual_activity_start_date": self.format_date(activity_summary.get("start_date", "")),
+            "unusual_activity_end_date": self.format_date(activity_summary.get("end_date", ""))
+        }
+        
+        # Generate recommendation sections
+        try:
+            alerting_activity = SAR_TEMPLATE["RECOMMENDATION"]["ALERTING_ACTIVITY"].format(**alerting_vars)
+            prior_sars = SAR_TEMPLATE["RECOMMENDATION"]["PRIOR_SARS"].format(prior_sar_content=prior_sar_content)
+            scope_of_review = SAR_TEMPLATE["RECOMMENDATION"]["SCOPE_OF_REVIEW"].format(
+                review_start_date=review_start,
+                review_end_date=review_end
+            )
+            # Summary of investigation requires user input, so we'll leave a placeholder
+            summary_of_investigation = SAR_TEMPLATE["RECOMMENDATION"]["SUMMARY_OF_INVESTIGATION"].format(
+                investigation_summary="[Investigator to input summary here]"
+            )
+            conclusion = SAR_TEMPLATE["RECOMMENDATION"]["CONCLUSION"].format(**conclusion_vars)
+            
+            return {
+                "alerting_activity": alerting_activity,
+                "prior_sars": prior_sars,
+                "scope_of_review": scope_of_review,
+                "summary_of_investigation": summary_of_investigation,
+                "conclusion": conclusion
+            }
+        except KeyError as e:
+            logger.warning(f"Missing key in recommendation template: {e}")
+            
+            # Fallback to simpler template
+            return {
+                "alerting_activity": f"**Alerting Activity:** {case_data.get('case_number', '')}: Account {account_number} alerted for suspicious activity.",
+                "prior_sars": f"**Prior SARs:** {prior_sar_content}",
+                "scope_of_review": f"**Scope of Review:** {review_start} - {review_end}",
+                "summary_of_investigation": "**Summary of Investigation:** [Investigator to input summary here]",
+                "conclusion": f"**Conclusion:** In conclusion, a SAR is recommended for suspicious activity totaling {self.format_currency(activity_summary.get('total_amount', 0))} conducted from {self.format_date(activity_summary.get('start_date', ''))} to {self.format_date(activity_summary.get('end_date', ''))}."
+            }
+    
+    def generate_referrals(self) -> Dict[str, str]:
+        """
+        Generate referral templates based on case data
+        
+        Returns:
+            Dict[str, str]: Dictionary of referral templates
+        """
+        # Placeholder for referral content - this would be populated based on the case data
+        # and the specific requirements for different referral types
+        
+        referrals = {}
+        
+        # Check for potential indicators that might suggest referrals
+        account_info = self.data.get("account_info", {})
+        transaction_summary = self.data.get("transaction_summary", {})
+        unusual_activity = self.data.get("unusual_activity", {})
+        
+        # Check for potential structuring (multiple transactions just under $10,000)
+        if unusual_activity and unusual_activity.get("transactions"):
+            transactions = unusual_activity.get("transactions", [])
+            potential_structuring = any(
+                9000 <= float(re.sub(r'[^\d.]', '', str(t.get("amount", 0)))) < 10000
+                for t in transactions
+            )
+            
+            if potential_structuring:
+                # Format for AAD_FTS (First Time Structuring)
+                account_number = account_info.get("account_number", "")
+                subjects = self.format_subject_list(include_relationship=False)
+                start_date = self.format_date(self.data.get("review_period", {}).get("start", ""))
+                end_date = self.format_date(self.data.get("review_period", {}).get("end", ""))
+                activity_start = self.format_date(unusual_activity.get("start_date", start_date))
+                activity_end = self.format_date(unusual_activity.get("end_date", end_date))
+                total_amount = self.format_currency(sum(float(re.sub(r'[^\d.]', '', str(t.get("amount", 0)))) for t in transactions))
+                
+                referrals["AAD_FTS"] = f"Account #{account_number}, held by {subjects}, was reviewed from {start_date} to {end_date} and identified potentially structured cash deposits/withdrawals conducted from {activity_start} to {activity_end} which totaled {total_amount}. A first time structuring letter will be sent to the customer."
+        
+        # Check for potential BIP (Business in Personal)
+        if transaction_summary:
+            business_keywords = ["LLC", "Inc", "Corp", "Company", "Business", "Enterprise"]
+            credit_breakdown = transaction_summary.get("credit_breakdown", [])
+            
+            has_business_transactions = any(
+                any(keyword in str(item.get("description", "")) for keyword in business_keywords)
+                for item in credit_breakdown
+            )
+            
+            if has_business_transactions:
+                # Format for BIP
+                account_number = account_info.get("account_number", "")
+                subjects = self.format_subject_list(include_relationship=False)
+                start_date = self.format_date(self.data.get("review_period", {}).get("start", ""))
+                end_date = self.format_date(self.data.get("review_period", {}).get("end", ""))
+                
+                # Calculate total amount of business transactions
+                business_transactions = [
+                    item for item in credit_breakdown
+                    if any(keyword in str(item.get("description", "")) for keyword in business_keywords)
+                ]
+                total_business_amount = self.format_currency(sum(float(re.sub(r'[^\d.]', '', str(item.get("amount", 0)))) for item in business_transactions))
+                
+                referrals["BIP"] = f"Account #{account_number}, held by {subjects}, was reviewed from {start_date} to {end_date} and identified potentially business in personal activity. The business in personal activity totaled {total_business_amount}. Please inform customer to cease all business in personal activity and open a business account."
+        
+        return referrals
     
     def generate_with_llm(self) -> str:
         """

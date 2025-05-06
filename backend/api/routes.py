@@ -1,389 +1,31 @@
-# Modified backend/api/routes.py
-"""
-API routes for SAR Narrative Generator
-"""
-from flask import Blueprint, request, jsonify, current_app
-import os
-from werkzeug.utils import secure_filename
-import uuid
-import json
-import re
-from datetime import datetime
-from typing import Dict, List, Any
-from flask import Blueprint, request, jsonify, current_app, send_file
-from ..processors.excel_processor import ExcelProcessor
-from ..processors.data_validator import DataValidator
-from ..generators.narrative_generator import NarrativeGenerator
-from ..integrations.llm_client import LLMClient
-from ..config import UPLOAD_DIR
-from ..utils.logger import get_logger
-from ..utils.json_utils import save_to_json_file
-from backend.data.case_repository import get_case, get_available_cases  # Import the new functions
+}), 500
 
-logger = get_logger(__name__)
-
-# Create Blueprint
-api_bp = Blueprint('api', __name__)
-
-@api_bp.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint"""
-    return jsonify({
-        "status": "ok",
-        "version": "1.0.0"
-    }), 200
-
-@api_bp.route('/cases', methods=['GET'])
-def get_available_case_list():
-    """Get list of available cases for UI dropdown"""
-    try:
-        cases = get_available_cases()
-        return jsonify({
-            "status": "success",
-            "cases": cases
-        }), 200
-    except Exception as e:
-        logger.error(f"Error retrieving available cases: {str(e)}")
-        return jsonify({
-            "status": "error",
-            "message": f"Error retrieving available cases: {str(e)}"
-        }), 500
-
-@api_bp.route('/generate', methods=['POST'])
-def generate_narrative():
+@api_bp.route('/transaction-sample/<session_id>', methods=['POST'])
+def add_transaction_sample(session_id):
     """
-    Process selected case and uploaded Excel file to generate SAR narrative
-    
-    Requires:
-    - case_number: Case number to use from static repository
-    - excelFile: Transaction Excel file
-    
-    Returns:
-    - narrative: Generated SAR narrative
-    - warnings: Any warnings during processing
-    - errors: Any errors during processing
+    Add a transaction sample to the unusual activity
     """
-    # Check if case_number was provided
-    case_number = request.form.get('case_number')
-    if not case_number:
+    # Validate session ID to prevent directory traversal
+    if not re.match(r'^[0-9a-f\-]+$', session_id):
         return jsonify({
             "status": "error",
-            "message": "Case number is required"
+            "message": "Invalid session ID format"
         }), 400
     
-    # Check if Excel file was uploaded
-    if 'excelFile' not in request.files:
+    data = request.json
+    if not data:
         return jsonify({
             "status": "error",
-            "message": "Excel file is required"
+            "message": "Transaction data is required"
         }), 400
     
-    excel_file = request.files['excelFile']
-    
-    # Check if file is empty
-    if excel_file.filename == '':
-        return jsonify({
-            "status": "error",
-            "message": "Empty Excel file name"
-        }), 400
-    
-    # Retrieve static case data
-    case_data = get_case(case_number)
-    if not case_data:
-        return jsonify({
-            "status": "error",
-            "message": f"Case number {case_number} not found"
-        }), 404
-    
-    # Create a unique session folder for this request
-    session_id = str(uuid.uuid4())
-    upload_folder = os.path.join(UPLOAD_DIR, session_id)
-    os.makedirs(upload_folder, exist_ok=True)
-    
-    # Save uploaded Excel file
-    excel_filename = secure_filename(excel_file.filename)
-    excel_path = os.path.join(upload_folder, excel_filename)
-    excel_file.save(excel_path)
-    
-    try:
-        # Process Excel file
-        logger.info(f"Processing Excel file: {os.path.basename(excel_path)}")
-        excel_processor = ExcelProcessor(excel_path)
-        excel_data = excel_processor.process()
-        
-        # Validate data
-        validator = DataValidator(case_data, excel_data)
-        is_valid, errors, warnings = validator.validate()
-        
-        if not is_valid and errors:
+    required_fields = ['date', 'amount', 'type', 'description', 'account']
+    for field in required_fields:
+        if field not in data:
             return jsonify({
                 "status": "error",
-                "message": "Validation failed",
-                "errors": errors,
-                "warnings": warnings
+                "message": f"Missing required field: {field}"
             }), 400
-        
-        # Fill missing data and get combined result
-        combined_data = validator.fill_missing_data()
-        
-        # Generate narrative
-        try:
-            narrative_generator = NarrativeGenerator(combined_data)
-            narrative = narrative_generator.generate_narrative()
-        except Exception as e:
-            logger.error(f"Error generating narrative: {str(e)}", exc_info=True)
-            return jsonify({
-                "status": "error",
-                "message": f"Error in narrative generation: {str(e)}"
-            }), 500
-        
-        # Split narrative into sections
-        sections = split_narrative_into_sections(narrative)
-        
-        # Create response with session ID for future reference
-        response = {
-            "status": "success",
-            "sessionId": session_id,
-            "caseNumber": case_data.get("case_number", ""),
-            "accountNumber": case_data.get("account_info", {}).get("account_number", ""),
-            "dateGenerated": datetime.now().isoformat(),
-            "warnings": warnings,
-            "sections": sections,
-            "excelFilename": os.path.basename(excel_path)
-        }
-        
-        # Save a copy of the processed data for later use
-        save_to_json_file({
-            "case_data": case_data,
-            "excel_data": excel_data,
-            "combined_data": combined_data,
-            "narrative": narrative,
-            "sections": sections
-        }, os.path.join(upload_folder, 'data.json'))
-        
-        return jsonify(response), 200
-    
-    except Exception as e:
-        logger.error(f"Error generating narrative: {str(e)}", exc_info=True)
-        # Clean up upload folder on error
-        try:
-            import shutil
-            shutil.rmtree(upload_folder)
-        except Exception as cleanup_error:
-            logger.error(f"Error cleaning up temporary files: {str(cleanup_error)}")
-            
-        return jsonify({
-            "status": "error",
-            "message": f"Error generating narrative: {str(e)}"
-        }), 500
-
-# We need this function from the original file
-def split_narrative_into_sections(narrative):
-    """
-    Split the narrative into editable sections
-    
-    Args:
-        narrative: Full narrative text
-        
-    Returns:
-        dict: Sections with ID, title, and content
-    """
-    if not narrative:
-        # Handle empty narrative
-        return {
-            "introduction": {"id": "introduction", "title": "Introduction", "content": ""},
-            "prior_cases": {"id": "prior_cases", "title": "Prior Cases", "content": ""},
-            "account_info": {"id": "account_info", "title": "Account Information", "content": ""},
-            "activity_summary": {"id": "activity_summary", "title": "Activity Summary", "content": ""},
-            "conclusion": {"id": "conclusion", "title": "Conclusion", "content": ""}
-        }
-    
-    paragraphs = narrative.split('\n\n')
-    
-    # Define default sections
-    sections = {
-        "introduction": {
-            "id": "introduction",
-            "title": "Introduction",
-            "content": paragraphs[0] if len(paragraphs) > 0 else ""
-        },
-        "prior_cases": {
-            "id": "prior_cases",
-            "title": "Prior Cases",
-            "content": paragraphs[1] if len(paragraphs) > 1 else ""
-        },
-        "account_info": {
-            "id": "account_info",
-            "title": "Account Information",
-            "content": paragraphs[2] if len(paragraphs) > 2 else ""
-        },
-        "activity_summary": {
-            "id": "activity_summary",
-            "title": "Activity Summary",
-            "content": paragraphs[3] if len(paragraphs) > 3 else ""
-        },
-        "conclusion": {
-            "id": "conclusion",
-            "title": "Conclusion",
-            "content": paragraphs[4] if len(paragraphs) > 4 else ""
-        }
-    }
-    
-    return sections
-
-
-@api_bp.route('/templates', methods=['GET'])
-def get_templates():
-    """Get available narrative templates"""
-    from ..config import TEMPLATES, ACTIVITY_TYPES
-    
-    return jsonify({
-        "status": "success",
-        "templates": TEMPLATES,
-        "activity_types": ACTIVITY_TYPES
-    }), 200
-    
-@api_bp.route('/sections/<session_id>', methods=['GET'])
-def get_sections(session_id):
-    """
-    Get narrative sections for a session
-    """
-    # Validate session ID to prevent directory traversal
-    if not re.match(r'^[0-9a-f\-]+$', session_id):
-        return jsonify({
-            "status": "error",
-            "message": "Invalid session ID format"
-        }), 400
-        
-    data_path = os.path.join(UPLOAD_DIR, session_id, 'data.json')
-    
-    if not os.path.exists(data_path):
-        return jsonify({
-            "status": "error",
-            "message": "Session not found"
-        }), 404
-    
-    try:
-        with open(data_path, 'r') as f:
-            data = json.load(f)
-        
-        return jsonify({
-            "status": "success",
-            "sections": data["sections"]
-        }), 200
-    
-    except Exception as e:
-        logger.error(f"Error fetching sections: {str(e)}")
-        return jsonify({
-            "status": "error",
-            "message": f"Error fetching sections: {str(e)}"
-        }), 500
-
-
-@api_bp.route('/sections/<session_id>/<section_id>', methods=['PUT'])
-def update_section(session_id, section_id):
-    """
-    Update a specific section
-    """
-    # Validate session ID to prevent directory traversal
-    if not re.match(r'^[0-9a-f\-]+$', session_id):
-        return jsonify({
-            "status": "error",
-            "message": "Invalid session ID format"
-        }), 400
-    
-    # Validate section ID
-    valid_section_ids = [
-        "introduction", 
-        "prior_cases", 
-        "account_info", 
-        "activity_summary", 
-        "conclusion", 
-        "subject_info", 
-        "transaction_samples"
-    ]
-    if section_id not in valid_section_ids:
-        return jsonify({
-            "status": "error",
-            "message": "Invalid section ID"
-        }), 400
-    
-    data_path = os.path.join(UPLOAD_DIR, session_id, 'data.json')
-    
-    if not os.path.exists(data_path):
-        return jsonify({
-            "status": "error",
-            "message": "Session not found"
-        }), 404
-    
-    content = request.json.get('content')
-    if not content:
-        return jsonify({
-            "status": "error",
-            "message": "Content is required"
-        }), 400
-    
-    try:
-        with open(data_path, 'r') as f:
-            data = json.load(f)
-        
-        # Update section content
-        if section_id in data["sections"]:
-            data["sections"][section_id]["content"] = content
-            
-            # Rebuild full narrative
-            narrative = rebuild_narrative(data["sections"])
-            data["narrative"] = narrative
-            
-            # Save updated data
-            with open(data_path, 'w') as f:
-                json.dump(data, f, default=str)  # Added default=str to handle datetime serialization
-            
-            return jsonify({
-                "status": "success",
-                "message": "Section updated successfully"
-            }), 200
-        else:
-            return jsonify({
-                "status": "error",
-                "message": "Section not found"
-            }), 404
-    
-    except Exception as e:
-        logger.error(f"Error updating section: {str(e)}")
-        return jsonify({
-            "status": "error",
-            "message": f"Error updating section: {str(e)}"
-        }), 500
-
-
-@api_bp.route('/regenerate/<session_id>/<section_id>', methods=['POST'])
-def regenerate_section(session_id, section_id):
-    """
-    Regenerate a specific section
-    """
-    # Validate session ID to prevent directory traversal
-    if not re.match(r'^[0-9a-f\-]+$', session_id):
-        return jsonify({
-            "status": "error",
-            "message": "Invalid session ID format"
-        }), 400
-    
-    # Validate section ID
-    valid_section_ids = [
-        "introduction", 
-        "prior_cases", 
-        "account_info", 
-        "activity_summary", 
-        "conclusion", 
-        "subject_info", 
-        "transaction_samples"
-    ]
-    if section_id not in valid_section_ids:
-        return jsonify({
-            "status": "error",
-            "message": "Invalid section ID"
-        }), 400
     
     data_path = os.path.join(UPLOAD_DIR, session_id, 'data.json')
     
@@ -395,56 +37,107 @@ def regenerate_section(session_id, section_id):
     
     try:
         with open(data_path, 'r') as f:
-            data = json.load(f)
-
+            session_data = json.load(f)
         
-        # Regenerate the specified section
-        combined_data = data["combined_data"]
+        combined_data = session_data["combined_data"]
+        
+        # Initialize unusual_activity if it doesn't exist
+        if "unusual_activity" not in combined_data:
+            combined_data["unusual_activity"] = {}
+        
+        if "transactions" not in combined_data["unusual_activity"]:
+            combined_data["unusual_activity"]["transactions"] = []
+        
+        # Add transaction to unusual activity
+        combined_data["unusual_activity"]["transactions"].append({
+            "date": data["date"],
+            "amount": data["amount"],
+            "type": data["type"],
+            "description": data["description"],
+            "account": data["account"]
+        })
+        
+        # Update session data
+        session_data["combined_data"] = combined_data
+        
+        # Regenerate transaction samples section
         narrative_generator = NarrativeGenerator(combined_data)
+        transaction_samples = narrative_generator.generate_transaction_samples()
         
-        # Generate section based on ID
-        section_content = ""
-        if section_id == "introduction":
-            section_content = narrative_generator.generate_introduction()
-        elif section_id == "prior_cases":
-            section_content = narrative_generator.generate_prior_cases()
-        elif section_id == "account_info":
-            section_content = narrative_generator.generate_account_info()
-        elif section_id == "activity_summary":
-            section_content = narrative_generator.generate_activity_summary()
-        elif section_id == "conclusion":
-            section_content = narrative_generator.generate_conclusion()
-        elif section_id == "subject_info":
-            section_content = narrative_generator.generate_subject_info()
-        elif section_id == "transaction_samples":
-            section_content = narrative_generator.generate_transaction_samples()
+        # Update section
+        if "transaction_samples" in session_data["sections"]:
+            session_data["sections"]["transaction_samples"]["content"] = transaction_samples
+        else:
+            session_data["sections"]["transaction_samples"] = {
+                "id": "transaction_samples",
+                "title": "Sample Transactions",
+                "content": transaction_samples
+            }
         
-        # Update section in data
-        data["sections"][section_id]["content"] = section_content
+        # Rebuild narrative
+        narrative = rebuild_narrative(session_data["sections"])
+        session_data["narrative"] = narrative
         
-        # Rebuild full narrative
-        narrative = rebuild_narrative(data["sections"])
-        data["narrative"] = narrative
-        
-        # Save updated data
         with open(data_path, 'w') as f:
-            json.dump(data, f, default=str)  # Added default=str to handle datetime serialization
+            json.dump(session_data, f, default=str)
         
         return jsonify({
             "status": "success",
-            "section": {
-                "id": section_id,
-                "content": section_content
+            "message": "Transaction sample added successfully",
+            "updated_section": {
+                "id": "transaction_samples",
+                "content": transaction_samples
             }
         }), 200
     
     except Exception as e:
-        logger.error(f"Error regenerating section: {str(e)}")
+        logger.error(f"Error adding transaction sample: {str(e)}")
         return jsonify({
             "status": "error",
-            "message": f"Error regenerating section: {str(e)}"
+            "message": f"Error adding transaction sample: {str(e)}"
         }), 500
 
+@api_bp.route('/transaction-samples/<session_id>', methods=['GET'])
+def get_transaction_samples(session_id):
+    """
+    Get transaction samples for the session
+    """
+    # Validate session ID to prevent directory traversal
+    if not re.match(r'^[0-9a-f\-]+$', session_id):
+        return jsonify({
+            "status": "error",
+            "message": "Invalid session ID format"
+        }), 400
+    
+    data_path = os.path.join(UPLOAD_DIR, session_id, 'data.json')
+    
+    if not os.path.exists(data_path):
+        return jsonify({
+            "status": "error",
+            "message": "Session not found"
+        }), 404
+    
+    try:
+        with open(data_path, 'r') as f:
+            session_data = json.load(f)
+        
+        combined_data = session_data["combined_data"]
+        
+        # Get transactions
+        unusual_activity = combined_data.get("unusual_activity", {})
+        transactions = unusual_activity.get("transactions", [])
+        
+        return jsonify({
+            "status": "success",
+            "transactions": transactions
+        }), 200
+    
+    except Exception as e:
+        logger.error(f"Error fetching transaction samples: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": f"Error fetching transaction samples: {str(e)}"
+        }), 500
 
 @api_bp.route('/export/<session_id>', methods=['GET'])
 def export_narrative(session_id):
@@ -509,7 +202,329 @@ def export_narrative(session_id):
             "status": "error",
             "message": f"Error exporting narrative: {str(e)}"
         }), 500
+
+@api_bp.route('/export-recommendation/<session_id>', methods=['GET'])
+def export_recommendation(session_id):
+    """
+    Export the SAR recommendation
+    """
+    # Validate session ID to prevent directory traversal
+    if not re.match(r'^[0-9a-f\-]+$', session_id):
+        return jsonify({
+            "status": "error",
+            "message": "Invalid session ID format"
+        }), 400
+    
+    data_path = os.path.join(UPLOAD_DIR, session_id, 'data.json')
+    
+    if not os.path.exists(data_path):
+        return jsonify({
+            "status": "error",
+            "message": "Session not found"
+        }), 404
+    
+    try:
+        with open(data_path, 'r') as f:
+            data = json.load(f)
+        case_data = data["case_data"]
         
+        # Check if recommendation exists
+        if "recommendation" not in data:
+            return jsonify({
+                "status": "error",
+                "message": "Recommendation not found"
+            }), 404
+        
+        recommendation = data["recommendation"]
+        
+        # Build recommendation text
+        recommendation_text = "\n\n".join([
+            recommendation.get("alerting_activity", ""),
+            recommendation.get("prior_sars", ""),
+            recommendation.get("scope_of_review", ""),
+            recommendation.get("summary_of_investigation", ""),
+            recommendation.get("conclusion", "")
+        ])
+        
+        # Create a temporary file for export
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as tmp:
+            case_number = case_data.get("case_number", "unknown")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Write header
+            tmp.write(f"SAR Recommendation - Case {case_number}\n".encode('utf-8'))
+            tmp.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n".encode('utf-8'))
+            
+            # Write recommendation
+            tmp.write("====================== SAR RECOMMENDATION ======================\n\n".encode('utf-8'))
+            tmp.write(recommendation_text.encode('utf-8'))
+            
+            # Add footer
+            tmp.write("\n\n===================================================================\n".encode('utf-8'))
+            tmp.write("Generated by SAR Narrative Generator".encode('utf-8'))
+            
+            tmp_path = tmp.name
+        
+        # Generate filename for download
+        filename = f"SAR_Recommendation_{case_number}_{timestamp}.txt"
+        
+        # Send file for download
+        return send_file(
+            tmp_path,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='text/plain'
+        )
+    
+    except Exception as e:
+        logger.error(f"Error exporting recommendation: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": f"Error exporting recommendation: {str(e)}"
+        }), 500
+
+@api_bp.route('/export-referral/<session_id>/<referral_type>', methods=['GET'])
+def export_referral(session_id, referral_type):
+    """
+    Export a referral document
+    """
+    # Validate session ID to prevent directory traversal
+    if not re.match(r'^[0-9a-f\-]+$', session_id):
+        return jsonify({
+            "status": "error",
+            "message": "Invalid session ID format"
+        }), 400
+    
+    # Check if referral type is valid
+    if referral_type not in REFERRAL_TYPES:
+        return jsonify({
+            "status": "error",
+            "message": f"Invalid referral type: {referral_type}"
+        }), 400
+    
+    data_path = os.path.join(UPLOAD_DIR, session_id, 'data.json')
+    
+    if not os.path.exists(data_path):
+        return jsonify({
+            "status": "error",
+            "message": "Session not found"
+        }), 404
+    
+    try:
+        with open(data_path, 'r') as f:
+            data = json.load(f)
+        case_data = data["case_data"]
+        
+        # Get referral documents
+        referral_documents = data.get("referral_documents", [])
+        
+        # Find the specific referral document
+        referral_doc = None
+        for doc in referral_documents:
+            if doc.get("type") == referral_type:
+                referral_doc = doc
+                break
+        
+        if not referral_doc:
+            # If no saved document, generate one from the template
+            referrals = data.get("referrals", {})
+            if referral_type in referrals:
+                referral_content = referrals[referral_type]
+            else:
+                # Use template with placeholders
+                referral_content = REFERRAL_TYPES[referral_type]["template"]
+        else:
+            referral_content = referral_doc.get("content", "")
+        
+        # Create a temporary file for export
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as tmp:
+            case_number = case_data.get("case_number", "unknown")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            referral_name = REFERRAL_TYPES[referral_type]["name"]
+            
+            # Write header
+            tmp.write(f"{referral_name} - Case {case_number}\n".encode('utf-8'))
+            tmp.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n".encode('utf-8'))
+            
+            # Write referral content
+            tmp.write(f"====================== {referral_name.upper()} ======================\n\n".encode('utf-8'))
+            tmp.write(referral_content.encode('utf-8'))
+            
+            # Add footer
+            tmp.write("\n\n===================================================================\n".encode('utf-8'))
+            tmp.write("Generated by SAR Narrative Generator".encode('utf-8'))
+            
+            tmp_path = tmp.name
+        
+        # Generate filename for download
+        filename = f"{referral_type}_{case_number}_{timestamp}.txt"
+        
+        # Send file for download
+        return send_file(
+            tmp_path,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='text/plain'
+        )
+    
+    except Exception as e:
+        logger.error(f"Error exporting referral: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": f"Error exporting referral: {str(e)}"
+        }), 500
+
+@api_bp.route('/export-closure/<session_id>', methods=['GET'])
+def export_closure(session_id):
+    """
+    Export a closure document
+    """
+    # Validate session ID to prevent directory traversal
+    if not re.match(r'^[0-9a-f\-]+$', session_id):
+        return jsonify({
+            "status": "error",
+            "message": "Invalid session ID format"
+        }), 400
+    
+    data_path = os.path.join(UPLOAD_DIR, session_id, 'data.json')
+    
+    if not os.path.exists(data_path):
+        return jsonify({
+            "status": "error",
+            "message": "Session not found"
+        }), 404
+    
+    try:
+        with open(data_path, 'r') as f:
+            data = json.load(f)
+        case_data = data["case_data"]
+        
+        # Get closure documents
+        closure_documents = data.get("closure_documents", [])
+        
+        if not closure_documents:
+            return jsonify({
+                "status": "error",
+                "message": "No closure documents found"
+            }), 404
+        
+        # Use the most recent closure document
+        closure_doc = closure_documents[-1]
+        closure_reason = closure_doc.get("reason", "")
+        closure_content = closure_doc.get("content", "")
+        
+        if not closure_reason in CLOSURE_REASONS:
+            closure_reason_text = "Closure Document"
+        else:
+            closure_reason_text = CLOSURE_REASONS[closure_reason]["name"]
+        
+        # Create a temporary file for export
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as tmp:
+            case_number = case_data.get("case_number", "unknown")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Write header
+            tmp.write(f"Closure Document - {closure_reason_text} - Case {case_number}\n".encode('utf-8'))
+            tmp.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n".encode('utf-8'))
+            
+            # Write closure content
+            tmp.write("====================== CLOSURE DOCUMENTATION ======================\n\n".encode('utf-8'))
+            tmp.write(f"Closure Reason: {closure_reason_text}\n\n".encode('utf-8'))
+            tmp.write(closure_content.encode('utf-8'))
+            
+            # Add footer
+            tmp.write("\n\n===================================================================\n".encode('utf-8'))
+            tmp.write("Generated by SAR Narrative Generator".encode('utf-8'))
+            
+            tmp_path = tmp.name
+        
+        # Generate filename for download
+        filename = f"Closure_{case_number}_{timestamp}.txt"
+        
+        # Send file for download
+        return send_file(
+            tmp_path,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='text/plain'
+        )
+    
+    except Exception as e:
+        logger.error(f"Error exporting closure document: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": f"Error exporting closure document: {str(e)}"
+        }), 500
+
+def split_narrative_into_sections(narrative):
+    """
+    Split the narrative into editable sections
+    
+    Args:
+        narrative: Full narrative text
+        
+    Returns:
+        dict: Sections with ID, title, and content
+    """
+    if not narrative:
+        # Handle empty narrative
+        return {
+            "introduction": {"id": "introduction", "title": "Introduction", "content": ""},
+            "prior_cases": {"id": "prior_cases", "title": "Prior Cases", "content": ""},
+            "account_info": {"id": "account_info", "title": "Account Information", "content": ""},
+            "subject_info": {"id": "subject_info", "title": "Subject Information", "content": ""},
+            "activity_summary": {"id": "activity_summary", "title": "Activity Summary", "content": ""},
+            "transaction_samples": {"id": "transaction_samples", "title": "Sample Transactions", "content": ""},
+            "conclusion": {"id": "conclusion", "title": "Conclusion", "content": ""}
+        }
+    
+    paragraphs = narrative.split('\n\n')
+    
+    # Define default sections
+    sections = {
+        "introduction": {
+            "id": "introduction",
+            "title": "Introduction",
+            "content": paragraphs[0] if len(paragraphs) > 0 else ""
+        },
+        "prior_cases": {
+            "id": "prior_cases",
+            "title": "Prior Cases",
+            "content": paragraphs[1] if len(paragraphs) > 1 else ""
+        },
+        "account_info": {
+            "id": "account_info",
+            "title": "Account Information",
+            "content": paragraphs[2] if len(paragraphs) > 2 else ""
+        },
+        "subject_info": {
+            "id": "subject_info",
+            "title": "Subject Information",
+            "content": paragraphs[3] if len(paragraphs) > 3 else ""
+        },
+        "activity_summary": {
+            "id": "activity_summary",
+            "title": "Activity Summary",
+            "content": paragraphs[4] if len(paragraphs) > 4 else ""
+        },
+        "transaction_samples": {
+            "id": "transaction_samples",
+            "title": "Sample Transactions",
+            "content": paragraphs[5] if len(paragraphs) > 5 else ""
+        },
+        "conclusion": {
+            "id": "conclusion",
+            "title": "Conclusion",
+            "content": paragraphs[6] if len(paragraphs) > 6 else ""
+        }
+    }
+    
+    return sections
+
+
 def rebuild_narrative(sections):
     """
     Rebuild the full narrative from sections
@@ -524,7 +539,9 @@ def rebuild_narrative(sections):
         sections.get("introduction", {}).get("content", ""),
         sections.get("prior_cases", {}).get("content", ""),
         sections.get("account_info", {}).get("content", ""),
+        sections.get("subject_info", {}).get("content", ""),
         sections.get("activity_summary", {}).get("content", ""),
+        sections.get("transaction_samples", {}).get("content", ""),
         sections.get("conclusion", {}).get("content", "")
     ]
     

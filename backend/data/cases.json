@@ -1,0 +1,1024 @@
+[
+    [
+      {
+        "section": "Case Information",
+        "Case Number": "CC0015823420",
+        "Relevant Accounts": [
+          "204784659052"
+        ],
+        "RBI Tier": "Blue"
+      },
+      {
+        "section": "Alerting Details",
+        "alerts": [
+          {
+            "Alert ID": "AMLR5881633",
+            "Alert Month": "201902",
+            "Alerting Account": "9999988",
+            "Description": "Number of Transactions: 2; High Risk Country; Accounts Involved: 4037670331863968; High-Risk Flag:0; Score=2",
+            "Review Period": "02/01/20 - 01/31/2024",
+            "Standard Summary": "Active Alert AMLR5881633 and Related Alert(s) AMLR5881634 were found to be related and were grouped together for alert analysis and disposition by ercm_aml_manager.",
+            "Description of Transactional Activity": "No Transactional review provided",
+            "Alert Disposition Summary": "No Disposition summary provided",
+            "Referrals and Escalations": "No Referrals provided",
+            "Adverse Media Review": "No Adverse Media note provided"
+          },
+          {
+            "Alert ID": "IRF_20180124001509SS",
+            "Alert Month": "201802",
+            "Alerting Account": "9999988",
+            "Description": "ICS transactions occurring in February 2019.",
+            "AOMT Escalation": "609IRF_20180124001509SS__IRF_PDF1011.pdf Note"
+          }
+        ]
+      },
+      {
+        "section": "Prior Cases/SARs",
+        "priorCases": [],
+        "Note": "No prior case or SAR information found"
+      },
+      {
+        "section": "Customer Information",
+        "US Bank Customer Information": [
+          {
+            "Primary Party": "GLENN A BROWDER",
+            "DBA Name": "N/A",
+            "Customer TIN": "111",
+            "Party Key": "001996028488849833",
+            "Fraud - Customer Relationship": "N/A",
+            "Customer Birth Date": "11/12/1970",
+            "Deceased": "N/A",
+            "Gender": "N/A",
+            "Occupation": "N/A",
+            "Occupation Description": "Doctor/Dentist",
+            "Employer": "SUMMIT ORTHOPEDICS",
+            "Line of Business": "WM",
+            "Customer Since Date": "04/25/2021",
+            "Source of Income": "N/A",
+            "Original Case Subject": "Yes",
+            "Map to SAR?": "Yes",
+            "Role in Suspicious Activity": "N/A",
+            "Corroborative Statement To Filer": "N/A",
+            "US Bank Customer": "Yes",
+            "US Bank Employee Indicator": "No",
+            "Country of Nationality": "US",
+            "Country of Citizenship": "N/A",
+            "Country of Permanent Residence": "UNITED STATES OF AMERICA",
+            "Notes on Personal Details": "N/A",
+            "Party Remark": "N/A",
+            "Other Parties": [
+              {
+                "Customer Name": "GLENN ANDREW BROWDER",
+                "Party Key": "ICS0000000123PR",
+                "Line of Business": "RPS_CREDIT",
+                "Customer Since Date": "08/01/2007"
+              },
+              {
+                "Customer Name": "GLENN ANDREW BROWDER",
+                "Party Key": "ICS0000000456PR",
+                "Line of Business": "RPS_CREDIT",
+                "Customer Since Date": "09/04/2018"
+              }
+            ],
+            "Addresses": [
+              "ICS: PRIMARY 857 FAIRMOUNT AVE SAINT PAUL MN SAINT PAUL, MINNESOTA, 55105-3341 UNITED STATES OF AMERICA",
+              "ICS: PRIMARY 857 FAIRMOUNT AVE SAINT PAUL MN SAINT PAUL, MINNESOTA, 55105-3341 UNITED STATES OF AMERICA",
+              "CIS: Legal, CIS: PRIMARY, CIS: CUSTOMER ADDRESS 857 FAIRMOUNT AVE SAINT PAUL, MINNESOTA, 55105-3341 UNITED STATES OF AMERICA"
+            ],
+            "Customer IDs": [
+              {
+                "Type": "Driver's License",
+                "ID Number": "L919715699361",
+                "Issuing Country": "N/A",
+                "Issuing State / Province": "MINNESOTA",
+                "Issuing Date": "11/12/2022",
+                "Expiration Date": "11/12/2025",
+                "Document Issuer": "MN"
+              }
+            ],
+            "Phone Numbers": [
+              "6512636215",
+              "6512910189",
+              "6512910926",
+              "6512912172",
+              "6512914208",
+              "6512915794",
+              "6512918238",
+              "6512918238",
+              "6519171589",
+              "6519171589",
+              "6519171740",
+              "6519176825",
+              "6519179710"
+            ],
+            "Customer Email": [
+              "001996028488849833@TDP.USBANK.COM",
+              "TEST.USER@USBANK.COM"
+            ],
+            "Alternative Names": "No alternative names found"
+          },
+          {
+            "Primary Party": "MICHAEL R BROWDER",
+            "DBA Name": "N/A",
+            "Customer TIN": "222",
+            "Party Key": "001999340661817087",
+            "Fraud - Customer Relationship": "N/A",
+            "Customer Birth Date": "12/30/1971",
+            "Deceased": "N/A",
+            "Gender": "N/A",
+            "Occupation": "na",
+            "Occupation Description": "Other",
+            "Employer": "UNEMPLOYED",
+            "Line of Business": "PYMT",
+            "Customer Since Date": "04/27/2021",
+            "Source of Income": "N/A",
+            "Original Case Subject": "Yes",
+            "Map to SAR?": "Yes",
+            "Role in Suspicious Activity": "N/A",
+            "Corroborative Statement To Filer": "N/A",
+            "US Bank Customer": "Yes",
+            "US Bank Employee Indicator": "No",
+            "Country of Nationality": "N/A",
+            "Country of Citizenship": "N/A",
+            "Country of Permanent Residence": "UNITED STATES OF AMERICA",
+            "Notes on Personal Details": "N/A",
+            "Party Remark": "N/A",
+            "Addresses": [
+              "CIS: Legal, CIS: PRIMARY, CIS: CUSTOMER ADDRESS, CIS: IDENTIFICATION ADDR 857 FAIRMOUNT AVE SAINT PAUL, MINNESOTA, 55105-3341 UNITED STATES OF AMERICA"
+            ],
+            "Customer IDs": [
+              {
+                "Type": "Driver's License",
+                "ID Number": "F585130545890",
+                "Issuing Country": "N/A",
+                "Issuing State / Province": "MINNESOTA",
+                "Issuing Date": "11/12/2022",
+                "Expiration Date": "12/30/2024",
+                "Document Issuer": "MN"
+              }
+            ],
+            "Phone Numbers": [
+              "6519170053",
+              "6519170053",
+              "6519172853",
+              "6519174375",
+              "9174021766"
+            ],
+            "Customer Email": [
+              "001999340661817087@TDP.USBANK.COM"
+            ],
+            "Alternative Names": "No alternative names found"
+          },
+          {
+            "Primary Party": "MICHAEL RHONDA BROWDER",
+            "DBA Name": "N/A",
+            "Customer TIN": "N/A",
+            "Party Key": "ICS00000000000CO",
+            "Fraud - Customer Relationship": "N/A",
+            "Customer Birth Date": "N/A",
+            "Deceased": "N/A",
+            "Gender": "N/A",
+            "Occupation": "N/A",
+            "Occupation Description": "N/A",
+            "Employer": "N/A",
+            "Line of Business": "N/A",
+            "Customer Since Date": "08/01/2007",
+            "Source of Income": "N/A",
+            "Original Case Subject": "Yes",
+            "Map to SAR?": "Yes",
+            "Role in Suspicious Activity": "N/A",
+            "Corroborative Statement To Filer": "N/A",
+            "US Bank Customer": "Yes",
+            "US Bank Employee Indicator": "N/A",
+            "Country of Nationality": "N/A",
+            "Country of Citizenship": "N/A",
+            "Country of Permanent Residence": "N/A",
+            "Notes on Personal Details": "N/A",
+            "Party Remark": "N/A",
+            "Addresses": [],
+            "Customer IDs": [],
+            "Phone Numbers": [],
+            "Customer Email": [],
+            "Alternative Names": "No alternative names found"
+          }
+        ],
+        "Non US Bank Customer Information": "No subject information found"
+      },
+      {
+        "section": "Database Searches",
+        "KYC Database": [
+          {
+            "Subject Name": "GLENN A BROWDER",
+            "WebKYC Form Link": "No WebKYC form links found",
+            "Adverse Media": "No",
+            "Correspondent Bank": "No",
+            "Foreign Financial Organization": "No",
+            "Issues Bearer Shares": "No",
+            "Politically Exposed Person (PEP)": "No",
+            "Wealth Management Customer": "No"
+          },
+          {
+            "Subject Name": "MICHAEL R BROWDER",
+            "WebKYC Form Link": "No WebKYC form links found",
+            "Adverse Media": "No",
+            "Correspondent Bank": "No",
+            "Foreign Financial Organization": "No",
+            "Issues Bearer Shares": "No"
+          },
+          {
+            "Subject Name": "MICHAEL RHONDA BROWDER",
+            "WebKYC Form Link": "No WebKYC form links found"
+          }
+        ],
+        "Risk Ratings": [
+          {
+            "Subject Name": "GLENN A BROWDER",
+            "Party Key": "001996028488849833",
+            "SOR": "CIS",
+            "Party Risk Rating Code Description": "1 Standard",
+            "Enterprise Risk Rating Code Description": "1 Standard"
+          },
+          {
+            "Subject Name": "MICHAEL R BROWDER",
+            "Party Key": "001999340661817087",
+            "SOR": "CIS",
+            "Party Risk Rating Code Description": "1 Standard",
+            "Enterprise Risk Rating Code Description": "1 Standard"
+          },
+          {
+            "Subject Name": "MICHAEL RHONDA BROWDER",
+            "Party Key": "ICS000000099911CO",
+            "SOR": "ICS",
+            "Party Risk Rating Code Description": "N/A",
+            "Enterprise Risk Rating Code Description": "N/A"
+          }
+        ],
+        "Adverse Media Review": "No adverse media found.",
+        "Adverse Media Notes": "No adverse media found.",
+        "Active Subjects": [
+          {
+            "Name": "GLENN A BROWDER",
+            "Primary Address": "857 FAIRMOUNT AVE, SAINT PAUL, MN, US, 55105-3341",
+            "SSN/TIN": "111",
+            "DOB": "11/12/1970"
+          },
+          {
+            "Name": "MICHAEL R BROWDER",
+            "Primary Address": "857 FAIRMOUNT AVE, SAINT PAUL, MN, US, 55105-3341",
+            "SSN/TIN": "222",
+            "DOB": "12/30/1971"
+          },
+          {
+            "Name": "MICHAEL RHONDA BROWDER",
+            "Primary Address": "N/A",
+            "SSN/TIN": "N/A",
+            "DOB": "N/A"
+          }
+        ],
+        "Adverse Media - Screening Results": {
+          "GLENN A BROWDER": {
+            "Search Value (Party Key)": "001996028488849833",
+            "Any Material Match Alerts?": "N/A*",
+            "Material Match to Customer?": "N/A*",
+            "Currently Being Monitored?": "Y",
+            "Current Monitoring Risk Level": "US STANDARD",
+            "Consecutively Monitored Since": "07/22/2020",
+            "Last Portfolio Monitoring Date": "07/22/2020",
+            "Screening Risk Level": "US STANDARD",
+            "Last Screening Date": "07/22/2020",
+            "Compliance ID": "192847195"
+          },
+          "MICHAEL R BROWDER": {
+            "Search Value (Party Key)": "001999340661817087",
+            "Any Material Match Alerts?": "N/A*",
+            "Material Match to Customer?": "N/A*",
+            "Currently Being Monitored?": "Y",
+            "Current Monitoring Risk Level": "US STANDARD",
+            "Consecutively Monitored Since": "07/22/2020",
+            "Last Portfolio Monitoring Date": "07/22/2020",
+            "Screening Risk Level": "US STANDARD",
+            "Last Screening Date": "07/22/2020",
+            "Compliance ID": "192988516"
+          }
+        },
+        "External Databases": [
+          {
+            "Subject Name": "GLENN A BROWDER",
+            "Details": "N/A"
+          },
+          {
+            "Subject Name": "MICHAEL R BROWDER",
+            "Details": "N/A"
+          },
+          {
+            "Subject Name": "MICHAEL RHONDA BROWDER",
+            "Details": "N/A"
+          }
+        ]
+      },
+      {
+        "section": "External/Internal Contacts",
+        "contacts": [],
+        "Note": "No External/Internal Contacts found for this case"
+      },
+      {
+        "section": "Account Information",
+        "Case Review Period": "01/01/2017 - 03/18/2024",
+        "Comments": "N/A",
+        "Accounts": [
+          {
+            "Account Key": "ICS9999988",
+            "Account Type": [
+              "ICSNPSLV",
+              "NPSL Visa"
+            ],
+            "Account Title": "BROWDER, GLENN ANDREW",
+            "Related Parties": [
+              "GLENN A BROWDER (First Co-Owner)",
+              "GLENN ANDREW BROWDER (Primary)",
+              "MICHAEL R BROWDER (Co-Owner Non-Primary)",
+              "MICHAEL RHONDA BROWDER (Account Signer)"
+            ],
+            "Account Opening Date & Branch": "09/04/2018",
+            "Account Holding Branch": "N/A",
+            "Account Closing Date": "N/A",
+            "Conversion Bank Account Number": "N/A",
+            "Status Date": "N/A",
+            "Status Description": "i50 (GOOD ACCOUNT)",
+            "LOB Code": [
+              "WM",
+              "PYMT"
+            ],
+            "Account Product Code": "N/A",
+            "Account Remark": "N/A",
+            "Credits": [
+              {
+                "Transaction Type": "ICS (+)",
+                "Percent of Total Credits": "100.00%",
+                "Total Amount": "$219.98",
+                "Txn Count": 3,
+                "Min Amount": "$19.99",
+                "Max Amount": "$180.00",
+                "Earliest Date": "3/4/2018",
+                "Latest Date": "2/11/2019"
+              }
+            ],
+            "Debits": [
+              {
+                "Transaction Type": "ICS (-)",
+                "Percent of Total Debits": "100.00%",
+                "Total Amount": "$2,419.36",
+                "Txn Count": 13,
+                "Min Amount": "$10.97",
+                "Max Amount": "$1,810.00",
+                "Earliest Date": "3/4/2018",
+                "Latest Date": "2/11/2019"
+              }
+            ]
+          },
+          {
+            "Account Key": "0300DDA00000000000104758567820",
+            "Account Type": [
+              "DDA85",
+              "Platinum Bus MM"
+            ],
+            "Account Title": "STEPHEN P MARSHALL CPA",
+            "Related Parties": [
+              "*BLACK HILLS CUSTOM TOURS (Authorized Non-Owner)",
+              "GLENN A BROWDER (Co-Owner Non-Primary)",
+              "*STEPHEN P MARSHALL CPA (PRI NON_IND OWNR)"
+            ],
+            "Account Opening Date & Branch": "11/04/2019",
+            "Account Holding Branch": "MINNEAPOLIS, MINNESOTA, 2797",
+            "Account Closing Date": "N/A",
+            "Conversion Bank Account Number": "N/A",
+            "Status Date": "N/A",
+            "Status Description": "07 (Closed)",
+            "LOB Code": [
+              "WM"
+            ],
+            "Account Product Code": "DDA (DDA)",
+            "Account Remark": "N/A",
+            "Credits": [
+              {
+                "Transaction Type": "Transfer (+)",
+                "Percent of Total Credits": "99.43%",
+                "Total Amount": "$3,000.00",
+                "Txn Count": 2,
+                "Min Amount": "$1,500.00",
+                "Max Amount": "$1,500.00",
+                "Earliest Date": "1/23/2017",
+                "Latest Date": "1/23/2017"
+              },
+              {
+                "Transaction Type": "Other (+)",
+                "Percent of Total Credits": "0.57%",
+                "Total Amount": "$17.30",
+                "Txn Count": 3,
+                "Min Amount": "$0.10",
+                "Max Amount": "$15.00",
+                "Earliest Date": "6/8/2017",
+                "Latest Date": "2/6/2018"
+              }
+            ],
+            "Debits": [
+              {
+                "Transaction Type": "Other (-)",
+                "Percent of Total Debits": "100.00%",
+                "Total Amount": "$15.00",
+                "Txn Count": 1,
+                "Min Amount": "$15.00",
+                "Max Amount": "$15.00",
+                "Earliest Date": "2/6/2018",
+                "Latest Date": "2/6/2018"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "section": "Recommendations",
+        "General Note": "No general note provided",
+        "SAR/No SAR Recommendation": {
+          "Alerting Activity / Reason for Review": "<Case Number>: *Alerting Account Type(s) and Number(s)* alerted in *Alerting Month(s)* for *Brief Description of alerting activity*>.",
+          "Prior SARs": "<Prior SARs>",
+          "Scope of Review": "<Review Period Start Date> - <Review Period End Date>",
+          "Summary of the Investigation": "<Red Flags, Supporting Evidence, etc.>",
+          "Conclusion": "In conclusion a SAR is recommended to report unusual <Unusual Activity Types> activity involving USB accounts <Unusual Activity USB Accounts> and subjects *SAR Subjects*. The unusual activity totaled <Unusual Activity Total> <Derived From Credits or Debits> between <Unusual Activity Start Date> and <Unusual Activity End Date>."
+        },
+        "Escalations/Referrals": {
+          "CTA": "N/A",
+          "CTA Request Type": "N/A",
+          "AAD Only – 1st or 2nd request?": "N/A",
+          "Questions": [
+            "What is our customer’s current or most recent occupation(s) and employer? If the customer is a student, what is their field of study and what school is being attended?",
+            "What is the nature of the customer’s business? If available, please provide the customer’s website as well as any physical addresses for their business locations.",
+            "What is the source of the customer’s account credit activity (cash, wires, other transactions) as described in the summary?",
+            "What is the purpose of the customer’s account debit activity as described in the summary?",
+            "Does the customer expect to have similar transactions (cash, wires or other activity described in the summary) in the future? If yes, what is the anticipated frequency, amount(s) and purpose of the activity?",
+            "What is the purpose of the wire transactions occurring in the customer’s accounts? What is our customer’s relationship to the wire originators and/or wire beneficiaries referenced in the summary?"
+          ]
+        },
+        "Retain or Close Customer Relationship(s)": {
+          "Retain": "No further action is necessary at this time. The customer relationship(s) can remain open.",
+          "Closure": "Requesting closure for USB customer(s) [Customers to be F-coded] due to [High-Risk Typology].",
+          "Non-F-coded": "USB customer(s) [Customer(s) that should NOT be F-coded] should NOT be F-coded.",
+          "Risk Factors": "[list risk factors here]",
+          "Closure Summary Requirements": [
+            "Summary must be 2,500 characters or less",
+            "Explain each F-coded customer's involvement in the High-Risk activity",
+            "Explain each Non-F-coded customer's involvement in the High-Risk activity and provide reasoning for retaining their customer relationships",
+            "Provide convincing reasoning for closure",
+            "Double check that closure macro contains all accounts returned from the Simple Query Tool, add if missing"
+          ]
+        },
+        "Hashtag Recommendation": "N/A",
+        "SAR Narrative": "U.S. Bank National Association (USB), is filing this Suspicious Activity Report (SAR) to report [type of activity] totaling $XXXXXX by [customer name] in business/personal checking/savings account number XXXXXXX. The suspicious [type of activity] were conducted from XXXXXXX through XXXXXXX.\n\nAdd details around Subject/Account Information:\n\nAdd details around Suspicious Activity:\n\nA sample of the suspicious transactions:\n\nIn conclusion, USB is reporting $XXXXXX in [type of activity] which gave the appearance of [type of activity] and were conducted by [customer name] in business/personal checking/savings account number XXXXXXX from XXXXXXX through XXXXXXX. USB will conduct a follow-up review to monitor for continuing activity. All requests for supporting documentation can be sent to lawenforcementrequestaml@usbank.com referencing AML case number CXXXXXX.",
+        "Created By": "ercm_aml_manager",
+        "Evidence ID": "E_5960981",
+        "Timestamp": "04/14/2025 11:51:14 AM"
+      }
+    ],
+    [
+      {
+        "section": "Case Information",
+        "Case Number": "CC0011468289",
+        "Relevant Accounts": [
+          "204781000000"
+        ],
+        "RBI Tier": "Blue"
+      },
+      {
+        "section": "Alerting Details",
+        "alerts": [
+          {
+            "Alert ID": "AMLC3235639",
+            "Alert Month": "202408",
+            "Alerting Account": "204781000000",
+            "Description": "Segment: IN; New Account: Yes; Prior SAR: No; Alerting Reason: Cash Deposits (Timeframe: 23AUG2024-30AUG2024, Transactions: 51, Amount: $30737.40); Acct Num(s): 00000000000204781000000; + 0 other(s); Score=2; Expected_Activity_Threshold=0.0; U1",
+            "Review Period": "08/01/2024 - 09/30/2024",
+            "Standard Summary": "Active Alert AMLC3235639 was reviewed for this analysis and disposition. No open or active related alerts were discovered during the course of this alert review.",
+            "Transactional Activity Description": "Account 204781000000 alerted for cash DEPOSITS. Activity consisted of 51 cash deposits totaling $30737.40. The alerted cash deposits appears excessive.",
+            "Alert Disposition Summary": "Case open. Transactions within the account appear to be unusual. The customer appears to make two cash withdrawals in amounts that when combined appears to surpass the threshold. The alerted cash withdrawals appears to be funded by the customer's related US Bank account which appears to have been closed. The amount of cash withdrawn is unusual and further review is recommended.",
+            "Referrals and Escalations": "No Referrals provided",
+            "Adverse Media Review": "Per Guardian Adverse Media Screening, no material matches were identified."
+          }
+        ]
+      },
+      {
+        "section": "Prior Cases/SARs",
+        "priorCases": [
+          {
+            "Case Number": "C2160004",
+            "Case Step": "AML RV90-No SAR Approved",
+            "Alerting Information": {
+              "Alert IDs": [
+                "SAM1-38053",
+                "SAM1-37012"
+              ],
+              "Alert Months": [
+                "202310",
+                "202209"
+              ],
+              "Alerting Account": "204781000000"
+            },
+            "Investigative Findings": "Alerting Activity / Reason for Review CS59696301: Personal savings account 204781000000 held by Bryan W Gomez-Cuenca, Erin L Theesfield, Matti J Gomez-Cuenca, Plamen J Gomez-Cuenca alerted in October 2023 and September 2022 for Pay a Person activity.",
+            "Scope of Review": {
+              "start": "04/26/2023",
+              "end": "12/15/2023"
+            },
+            "Investigation Summary": "Within personal savings account 204781000000; ACH deposits in the personal checking account consist of UPS Payroll, apple cash transfers, and Venmo cashouts PAP Zelle credits are remitted frequently varying in amounts from $2.00 to $6391.00, with multiple remittances being received on same days. Visa money deposits appear to be cash outs from cash app. Transfer credits are primarily remitted from Money Market savings account xxxx4533. RTP credits are minimal. Transfer debits are sent to savings account xxx4533 with amounts appearing reasonable for savings account funding purposes. ACH withdrawals consist of bill payments and PayPal transfers. PAP debits do not appear excessive in amount or volume. POS purchases are consistent with expected consumer expenses such as grocery, food and subscription services. RTP debits do not appear excessive for personal remittances. Unusual activity consists of 183 PAP Zelle Credits totaling $149,939.00, $103,370.58 in ACH deposits from external accounts (apple cash, cash app, venmo), VMRT C (15 totaling $10,669.70) and RTPC (1) of $759.48. Which appears excessive for the customer whose employer is listed as teacher/professor. The PAP crediting activity appears to lack transparency and is deemed unusual. There is no clear relationship to counterparties who are remitting the funds. Surrounding crediting activity will not be deemed unusual as funds appear to be transfers from external bank accounts and transfers from related savings account. Debiting activity will not be deemed suspicious as the primary use of funds is funding the customers related money market savings account xxxx9609 as well as POS purchases and ACH withdrawals consistent with expected consumer bill payments and spending. PAP debits do not appear excessive for personal remittances. In conclusion a SAR is recommended to report unusual ACH credits activity involving USB accounts 204781415920 and subjects Bryan W Gomez-Cuenca, Erin L Theesfield, Matti J Gomez-Cuenca, Plamen J Gomez Cuenca. The unusual activity totaled $264,738.76 derived from credits between 04/30/2023 and 11/29/2023.",
+            "SAR Details": {
+              "Form Number": "0005680019",
+              "DCN Number": "",
+              "Filing Date": "N/A",
+              "Filing Date Range": {
+                "start": "04/23/2023",
+                "end": "11/29/2023"
+              },
+              "Amount Reported": 264739,
+              "Amount Unknown": "No",
+              "No Amount Involved": "No",
+              "Subject Names": "N/A",
+              "Account Numbers": "N/A",
+              "Attachment": "CSV file with transaction details",
+              "SAR Summary": "U.S. Bank National Association (USB), is filing this Suspicious Activity Report (SAR) to report Automated Clearing House (ACH) credits activity totaling $264,738.76 derived from credits. Activity within the personal checking account is being deemed suspicious due to the source and purpose of the transactions being unknown as is the connection between the customers and counterparties. The suspicious activity was conducted from 04/23/2023 – 11/29/2023. This SAR contains an attached Comma Separated Value (CSV) file that provides additional details of the suspicious transactions being reported in this SAR. Personal savings account 204781000000 is held by Bryan W Gomez-Cuenca, Erin L Theesfield, Matti J Gomez-Cuenca, Plamen J Gomez Cuenca."
+            },
+            "General Comments": "A CTA was completed on 12/18/2023 with Bryan W Gomez. The ACH credits are from friends and colleagues. The customer runs a pickle ball league on the weekends and expects the activity to continue."
+          }
+        ]
+      },
+      {
+        "section": "Customer Information",
+        "customerInformation": {
+          "US Bank Customers": [
+            {
+              "Name": "BRYAN W GOMEZ-CUENCA",
+              "Party Key": "000993597946532651",
+              "Customer TIN": "123",
+              "Birth Date": "07/23/1960",
+              "Occupation Description": "Teacher/Professor",
+              "Employer": "Retired",
+              "Line of Business": "CBBD",
+              "Customer Since": "04/27/2021",
+              "Nationality": "Mexico",
+              "Residence": "UNITED STATES OF AMERICA",
+              "Addresses": [
+                "16135 NARCISSUS ST NW ANDOVER, MINNESOTA, 553042467 UNITED STATES OF AMERICA"
+              ],
+              "Identifications": [
+                {
+                  "Type": "Driver's License",
+                  "ID Number": "POKO",
+                  "State": "MINNESOTA",
+                  "Issued": "03/04/2018",
+                  "Expires": "12/31/9999"
+                },
+                {
+                  "Type": "Passport",
+                  "ID Number": "165123",
+                  "Country": "Mexico",
+                  "Issued": "03/04/2018",
+                  "Expires": "12/31/9999"
+                }
+              ],
+              "Phones": [
+                "7635060830",
+                "7635062381",
+                "7635063592",
+                "7635761379",
+                "7635761847",
+                "7635769508"
+              ]
+            },
+            {
+              "Name": "ERIN L THEESFIELD",
+              "Party Key": "000993603253243131",
+              "Customer TIN": "456",
+              "Birth Date": "06/21/1990",
+              "Occupation Description": "NANNY",
+              "Line of Business": "HOGAN_CIS",
+              "Customer Since": "09/08/2017",
+              "Nationality": "Australia",
+              "Addresses": [
+                "16135 NARCISSUS ST NW ANDOVER, MINNESOTA, 553042467 UNITED STATES_OF AMERICA"
+              ],
+              "Identifications": [
+                {
+                  "Type": "Driver's License",
+                  "ID Number": "F449832551089",
+                  "State": "MINNESOTA",
+                  "Issued": "05/11/2017",
+                  "Expires": "06/21/2017"
+                },
+                {
+                  "Type": "Passport",
+                  "ID Number": "231564",
+                  "Country": "Australia",
+                  "Issued": "05/11/2017",
+                  "Expires": "06/21/2017"
+                }
+              ]
+            },
+            {
+              "Name": "MATTI J GOMEZ-CUENCA",
+              "Party Keys": [
+                "000993597946511073",
+                "ICS00000004037670139524689PR"
+              ],
+              "Customer TIN": "789",
+              "Birth Date": "05/31/1990",
+              "Occupation Description": "STUDENT",
+              "Employer": "STUDENT",
+              "Line of Business": "CBBD",
+              "Customer Since": [
+                "04/27/2021",
+                "12/01/2008"
+              ],
+              "Addresses": [
+                "16223 NARCISSUS ST NW ANDOVER MN ANDOVER, MINNESOTA, 553042478 UNITED STATES_OF AMERICA",
+                "16135 NARCISSUS ST NW ANDOVER, MINNESOTA, 553042467 UNITED STATES_OF AMERICA"
+              ],
+              "Identifications": [
+                {
+                  "Type": "Driver's License",
+                  "ID Number": "M280337507927",
+                  "State": "MINNESOTA",
+                  "Issued": "03/04/2018",
+                  "Expires": "12/31/9999"
+                }
+              ],
+              "Phones": [
+                "7635760177",
+                "7635761355",
+                "7635761461",
+                "7635766546",
+                "7635769284"
+              ],
+              "Emails": [
+                "000993597946511073@TDP.USBANK.COM",
+                "TEST.USER@USBANK.COM"
+              ]
+            },
+            {
+              "Name": "PLAMEN J GOMEZ-CUENCA",
+              "Party Key": "000993603407737359",
+              "Customer TIN": "1122",
+              "Birth Date": "12/22/1957",
+              "Employer": "ANOKA SCHOOL DISTRICT",
+              "Line of Business": "HOGAN_CIS",
+              "Customer Since": "09/08/2017",
+              "Addresses": [
+                "16135 NARCISSUS ST NW ANDOVER, MINNESOTA, 553042467 UNITED STATES_OF AMERICA"
+              ],
+              "Identifications": [
+                {
+                  "Type": "Driver's License",
+                  "ID Number": "H-441-865-259-909",
+                  "State": "MINNESOTA",
+                  "Issued": "05/11/2017",
+                  "Expires": "12/31/9999"
+                }
+              ],
+              "Phones": [
+                "7632424196",
+                "7635061900",
+                "7635763316"
+              ],
+              "Emails": [
+                "000993603407737359@TDP.USBANK.COM"
+              ]
+            }
+          ],
+          "Non US Bank Customers": [
+            {
+              "Name": "GreenHouse Inc",
+              "Incorporation Date": "11/23/2020"
+            },
+            {
+              "Name": "Joe Brown",
+              "Birth Date": "11/23/2000"
+            }
+          ]
+        }
+      },
+      {
+        "section": "Database Searches",
+        "databaseSearches": {
+          "KYC Database": [
+            {
+              "Subject": "BRYAN W GOMEZ-CUENCA",
+              "WebKYC": false,
+              "Adverse Media": false,
+              "PEP": false
+            },
+            {
+              "Subject": "ERIN L THEESFIELD",
+              "WebKYC": false
+            },
+            {
+              "Subject": "MATTI J GOMEZ-CUENCA",
+              "WebKYC": false,
+              "Adverse Media": false,
+              "PEP": false
+            },
+            {
+              "Subject": "PLAMEN J GOMEZ-CUENCA",
+              "WebKYC": false
+            },
+            {
+              "Subject": "GreenHouse Inc",
+              "WebKYC": false
+            },
+            {
+              "Subject": "Joe Brown",
+              "WebKYC": false
+            }
+          ],
+          "Risk Ratings": [
+            {
+              "Name": "BRYAN W GOMEZ-CUENCA",
+              "Rating": "1 Standard"
+            },
+            {
+              "Name": "ERIN L THEESFIELD",
+              "Rating": "N/A"
+            },
+            {
+              "Name": "MATTI J GOMEZ-CUENCA",
+              "Rating": "1 Standard"
+            },
+            {
+              "Name": "PLAMEN J GOMEZ-CUENCA",
+              "Rating": "N/A"
+            }
+          ],
+          "Adverse Media Review": "No adverse media found.",
+          "Active Subjects": [
+            {
+              "Name": "BRYAN W GOMEZ-CUENCA",
+              "DOB": "07/23/1960"
+            },
+            {
+              "Name": "ERIN L THEESFIELD",
+              "DOB": "06/21/1990"
+            },
+            {
+              "Name": "MATTI J GOMEZ-CUENCA",
+              "DOB": "05/31/1990"
+            },
+            {
+              "Name": "PLAMEN J GOMEZ-CUENCA",
+              "DOB": "12/22/1957"
+            },
+            {
+              "Name": "GreenHouse Inc",
+              "Date": "11/23/2020"
+            },
+            {
+              "Name": "Joe Brown",
+              "Date": "11/23/2000"
+            }
+          ]
+        }
+      },
+      {
+        "section": "External/Internal Contacts",
+        "contacts": []
+      },
+      {
+        "section": "Account Information",
+        "accountInformation": {
+          "Review Period": "08/01/2024 – 10/15/2024",
+          "Account": {
+            "Account Key": "0300DDA00000000000204781000000",
+            "Types": [
+              "DDARS",
+              "USB Standard Savings"
+            ],
+            "Title": "MATTI J GOMEZ-CUENCA",
+            "Related Parties": [
+              "MATTI J GOMEZ-CUENCA",
+              "ERIN L THEESFIELD",
+              "BRYAN W GOMEZ-CUENCA",
+              "PLAMEN J GOMEZ-CUENCA"
+            ],
+            "Opening": {
+              "Date": "08/15/2024",
+              "Branch": "ANDOVER, MINNESOTA, 2456"
+            },
+            "Closing Date": "10/02/2024",
+            "Status": {
+              "Code": "99",
+              "Description": "Closed"
+            },
+            "Product Code": "DDA"
+          },
+          "Credits": [
+            {
+              "Type": "Cash (+)",
+              "Percent": "67.06%",
+              "Total Amount": "$71,720.60",
+              "Count": 119,
+              "Min": "$1.00",
+              "Max": "$2,837.42",
+              "Earliest": "8/23/2024",
+              "Latest": "10/4/2024"
+            },
+            {
+              "Type": "Transfer (+)",
+              "Percent": "16.03%",
+              "Total Amount": "$17,150.00",
+              "Count": 11,
+              "Min": "$50.00",
+              "Max": "$8,000.00",
+              "Earliest": "8/23/2024",
+              "Latest": "10/3/2024"
+            },
+            {
+              "Type": "REVERSAL",
+              "Percent": "10.22%",
+              "Total Amount": "$10,931.85",
+              "Count": 38,
+              "Min": "$0.45",
+              "Max": "$1,150.00",
+              "Earliest": "8/23/2024",
+              "Latest": "10/4/2024"
+            },
+            {
+              "Type": "Other (+)",
+              "Percent": "6.29%",
+              "Total Amount": "$6,728.68",
+              "Count": 21,
+              "Min": "$0.04",
+              "Max": "$6,535.70",
+              "Earliest": "8/24/2024",
+              "Latest": "10/4/2024"
+            },
+            {
+              "Type": "ICS (+)",
+              "Percent": "0.38%",
+              "Total Amount": "$402.34",
+              "Count": 2,
+              "Min": "$3.02",
+              "Max": "$399.32",
+              "Earliest": "9/27/2024",
+              "Latest": "9/27/2024"
+            },
+            {
+              "Type": "FEE CREDIT",
+              "Percent": "0.02%",
+              "Total Amount": "$20.00",
+              "Count": 2,
+              "Min": "$10.00",
+              "Max": "$10.00",
+              "Earliest": "10/3/2024",
+              "Latest": "10/4/2024"
+            },
+            {
+              "Type": "ACH (+)",
+              "Percent": "0.00%",
+              "Total Amount": "$0.11",
+              "Count": 1,
+              "Min": "$0.11",
+              "Max": "$0.11",
+              "Date": "8/23/2024"
+            }
+          ],
+          "Debits": [
+            {
+              "Type": "Cash (-)",
+              "Percent": "89.42%",
+              "Total Amount": "$600,600.00",
+              "Count": 6,
+              "Min": "$100,100.00",
+              "Max": "$100,100.00",
+              "Earliest": "8/23/2024",
+              "Latest": "10/4/2024"
+            },
+            {
+              "Type": "Check (-)",
+              "Percent": "4.37%",
+              "Total Amount": "$29,363.00",
+              "Count": 78,
+              "Min": "$1.00",
+              "Max": "$1,100.00",
+              "Earliest": "8/23/2024",
+              "Latest": "10/4/2024"
+            },
+            {
+              "Type": "DEBIT REVERSAL (ALL TYPE)",
+              "Percent": "3.58%",
+              "Total Amount": "$24,050.00",
+              "Count": 4,
+              "Min": "$50.00",
+              "Max": "$8,000.00",
+              "Earliest": "8/24/2024",
+              "Latest": "10/4/2024"
+            },
+            {
+              "Type": "Transfer (-)",
+              "Percent": "1.33%",
+              "Total Amount": "$8,918.95",
+              "Count": 15,
+              "Min": "$1.00",
+              "Max": "$5,000.00",
+              "Earliest": "8/23/2024",
+              "Latest": "10/3/2024"
+            },
+            {
+              "Type": "ICS (-)",
+              "Percent": "1.10%",
+              "Total Amount": "$7,362.74",
+              "Count": 29,
+              "Min": "$1.00",
+              "Max": "$2,085.75",
+              "Earliest": "9/27/2024",
+              "Latest": "10/10/2024"
+            },
+            {
+              "Type": "FOREIGN CURRENCY PURCHASE - FROM DDA",
+              "Percent": "0.09%",
+              "Total Amount": "$594.23",
+              "Count": 2,
+              "Min": "$296.01",
+              "Max": "$298.22",
+              "Earliest": "10/3/2024",
+              "Latest": "10/4/2024"
+            },
+            {
+              "Type": "Other (-)",
+              "Percent": "0.09%",
+              "Total Amount": "$581.65",
+              "Count": 24,
+              "Min": "$6.95",
+              "Max": "$36.00",
+              "Earliest": "8/23/2024",
+              "Latest": "10/4/2024"
+            },
+            {
+              "Type": "POS (-)",
+              "Percent": "0.03%",
+              "Total Amount": "$186.65",
+              "Count": 11,
+              "Min": "$1.11",
+              "Max": "$47.60",
+              "Earliest": "8/24/2024",
+              "Latest": "8/30/2024"
+            },
+            {
+              "Type": "FX EXPEDITED SHIPPING FEE",
+              "Percent": "0.00%",
+              "Total Amount": "$30.00",
+              "Count": 2,
+              "Min": "$15.00",
+              "Max": "$15.00",
+              "Date": "10/3/2024"
+            },
+            {
+              "Type": "Wire (-)",
+              "Percent": "0.00%",
+              "Total Amount": "$4.00",
+              "Count": 1,
+              "Date": "8/23/2024"
+            },
+            {
+              "Type": "ACH (-)",
+              "Percent": "0.00%",
+              "Total Amount": "$2.40",
+              "Count": 3,
+              "Min": "$0.45",
+              "Max": "$1.50",
+              "Earliest": "8/24/2024",
+              "Latest": "10/4/2024"
+            }
+          ]
+        }
+      },
+      {
+        "section": "Recommendations",
+        "recommendations": {
+          "General Note": null,
+          "SAR Decision Options": [
+            "SAR",
+            "No SAR"
+          ],
+          "Escalations/Referrals Questions": [
+            "What is our customer’s current or most recent occupation(s) and employer?",
+            "If the customer is a student, what is their field of study and what school is being attended?",
+            "What is the nature of the customer’s business? (website, addresses)",
+            "What is the source of the customer’s account credit activity?",
+            "What is the purpose of the customer’s account debit activity?",
+            "Does the customer expect similar future transactions? Frequency, amounts, purpose?",
+            "What is the purpose of the wire transactions and relationship to originators/beneficiaries?"
+          ],
+          "Retention or Closure": {
+            "Retain": "No further action is necessary; relationship can remain open.",
+            "Closure": "Requesting closure for USB customer(s) due to [High-Risk Typology]. Explain each F-coded and non-F-coded involvement."
+          },
+          "Hashtag Recommendation": null,
+          "SAR Narrative Template": "U.S. Bank National Association (USB), is filing this Suspicious Activity Report (SAR) to report [type of activity] totaling $XXXXXX by [customer name] in business/personal checking/savings account number XXXXXXX from XXXXXXX through XXXXXXX. Add details around Subject/Account Information, Suspicious Activity, a sample of transactions, and conclude with monitoring plans. Contact lawenforcementrequestaml@usbank.com referencing AML case number CXXXXXX."
+        }
+      }
+    ]
+  ]

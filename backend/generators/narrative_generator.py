@@ -211,7 +211,7 @@ class NarrativeGenerator:
             
             # Fall back to LLM as a second option
             return self.llm_client.generate_section("introduction", template_vars) or \
-                f"U.S. Bank National Association (USB), is filing this Suspicious Activity Report (SAR) to report {template_vars['activity_type']} totaling {template_vars['total_amount']} {template_vars['derived_from']} by {template_vars['subjects']} in {template_vars['account_type']} account number {template_vars['account_number']}. The suspicious activity was conducted from {template_vars['start_date']} through {template_vars['end_date']}."
+                f"U.S. Bank National Association (USB), is filing this Suspicious Activity Report (SAR) to report {template_vars['activity_type']} totaling {template_vars['total_amount']} {template_vars.get('derived_from', 'derived from credits and debits')} by {template_vars['subjects']} in {template_vars['account_type']} account number {template_vars['account_number']}. The suspicious activity was conducted from {template_vars['start_date']} through {template_vars['end_date']}."
     
     def prepare_prior_cases_data(self) -> Dict[str, Any]:
         """
@@ -573,7 +573,7 @@ class NarrativeGenerator:
     
     def generate_narrative(self) -> str:
         """
-        Generate complete SAR narrative
+        Generate complete SAR narrative - THIS IS THE METHOD BEING CALLED
         
         Returns:
             str: Complete SAR narrative
@@ -596,193 +596,29 @@ class NarrativeGenerator:
         
         return narrative
     
-    def generate_recommendation(self) -> Dict[str, str]:
-        """
-        Generate SAR recommendation sections
-        
-        Returns:
-            Dict[str, str]: Dictionary of recommendation sections
-        """
-        # Prepare template variables
-        case_data = self.data
-        alert_info = case_data.get("alert_info", [])
-        if isinstance(alert_info, list) and alert_info:
-            alert_info = alert_info[0]
-        
-        activity_type = self.determine_activity_type()
-        account_info = case_data.get("account_info", {})
-        activity_summary = self.data.get("activity_summary", {})
-        
-        # Format alerting activity
-        account_types = account_info.get("account_type", "checking/savings")
-        account_number = account_info.get("account_number", "")
-        alerting_months = alert_info.get("alert_month", "") if isinstance(alert_info, dict) else ""
-        alerting_description = alert_info.get("description", "") if isinstance(alert_info, dict) else ""
-        
-        alerting_vars = {
-            "case_number": case_data.get("case_number", ""),
-            "alerting_account_types": account_types,
-            "alerting_account_numbers": account_number,
-            "alerting_months": alerting_months,
-            "alerting_description": alerting_description
-        }
-        
-        # Format prior SARs
-        prior_cases = case_data.get("prior_cases", [])
-        if prior_cases:
-            prior_sar_content = self.generate_prior_cases()
-        else:
-            prior_sar_content = "No prior SARs were identified for the subjects or account."
-        
-        # Format scope of review
-        review_period = case_data.get("review_period", {})
-        review_start = self.format_date(review_period.get("start", ""))
-        review_end = self.format_date(review_period.get("end", ""))
-        
-        # Format conclusion
-        conclusion_vars = {
-            "unusual_activity_types": activity_type.get("name", "suspicious activity"),
-            "unusual_activity_usb_accounts": account_info.get("account_number", ""),
-            "sar_subjects": self.format_subject_list(include_relationship=False),
-            "unusual_activity_total": self.format_currency(activity_summary.get("total_amount", 0)),
-            "derived_from": activity_type.get("derived_from", "derived from credits and debits"),
-            "unusual_activity_start_date": self.format_date(activity_summary.get("start_date", "")),
-            "unusual_activity_end_date": self.format_date(activity_summary.get("end_date", ""))
-        }
-        
-        # Generate recommendation sections
-        try:
-            alerting_activity = SAR_TEMPLATE["RECOMMENDATION"]["ALERTING_ACTIVITY"].format(**alerting_vars)
-            prior_sars = SAR_TEMPLATE["RECOMMENDATION"]["PRIOR_SARS"].format(prior_sar_content=prior_sar_content)
-            scope_of_review = SAR_TEMPLATE["RECOMMENDATION"]["SCOPE_OF_REVIEW"].format(
-                review_start_date=review_start,
-                review_end_date=review_end
-            )
-            # Summary of investigation requires user input, so we'll leave a placeholder
-            summary_of_investigation = SAR_TEMPLATE["RECOMMENDATION"]["SUMMARY_OF_INVESTIGATION"].format(
-                investigation_summary="[Investigator to input summary here]"
-            )
-            conclusion = SAR_TEMPLATE["RECOMMENDATION"]["CONCLUSION"].format(**conclusion_vars)
-            
-            return {
-                "alerting_activity": alerting_activity,
-                "prior_sars": prior_sars,
-                "scope_of_review": scope_of_review,
-                "summary_of_investigation": summary_of_investigation,
-                "conclusion": conclusion
-            }
-        except KeyError as e:
-            logger.warning(f"Missing key in recommendation template: {e}")
-            
-            # Fallback to simpler template
-            return {
-                "alerting_activity": f"**Alerting Activity:** {case_data.get('case_number', '')}: Account {account_number} alerted for suspicious activity.",
-                "prior_sars": f"**Prior SARs:** {prior_sar_content}",
-                "scope_of_review": f"**Scope of Review:** {review_start} - {review_end}",
-                "summary_of_investigation": "**Summary of Investigation:** [Investigator to input summary here]",
-                "conclusion": f"**Conclusion:** In conclusion, a SAR is recommended for suspicious activity totaling {self.format_currency(activity_summary.get('total_amount', 0))} conducted from {self.format_date(activity_summary.get('start_date', ''))} to {self.format_date(activity_summary.get('end_date', ''))}."
-            }
-    
-    def generate_referrals(self) -> Dict[str, str]:
-        """
-        Generate referral templates based on case data
-        
-        Returns:
-            Dict[str, str]: Dictionary of referral templates
-        """
-        # Placeholder for referral content - this would be populated based on the case data
-        # and the specific requirements for different referral types
-        
-        referrals = {}
-        
-        # Check for potential indicators that might suggest referrals
-        account_info = self.data.get("account_info", {})
-        transaction_summary = self.data.get("transaction_summary", {})
-        unusual_activity = self.data.get("unusual_activity", {})
-        
-        # Check for potential structuring (multiple transactions just under $10,000)
-        if unusual_activity and unusual_activity.get("transactions"):
-            transactions = unusual_activity.get("transactions", [])
-            potential_structuring = any(
-                9000 <= float(re.sub(r'[^\d.]', '', str(t.get("amount", 0)))) < 10000
-                for t in transactions
-            )
-            
-            if potential_structuring:
-                # Format for AAD_FTS (First Time Structuring)
-                account_number = account_info.get("account_number", "")
-                subjects = self.format_subject_list(include_relationship=False)
-                start_date = self.format_date(self.data.get("review_period", {}).get("start", ""))
-                end_date = self.format_date(self.data.get("review_period", {}).get("end", ""))
-                activity_start = self.format_date(unusual_activity.get("start_date", start_date))
-                activity_end = self.format_date(unusual_activity.get("end_date", end_date))
-                total_amount = self.format_currency(sum(float(re.sub(r'[^\d.]', '', str(t.get("amount", 0)))) for t in transactions))
-                
-                referrals["AAD_FTS"] = f"Account #{account_number}, held by {subjects}, was reviewed from {start_date} to {end_date} and identified potentially structured cash deposits/withdrawals conducted from {activity_start} to {activity_end} which totaled {total_amount}. A first time structuring letter will be sent to the customer."
-        
-        # Check for potential BIP (Business in Personal)
-        if transaction_summary:
-            business_keywords = ["LLC", "Inc", "Corp", "Company", "Business", "Enterprise"]
-            credit_breakdown = transaction_summary.get("credit_breakdown", [])
-            
-            has_business_transactions = any(
-                any(keyword in str(item.get("description", "")) for keyword in business_keywords)
-                for item in credit_breakdown
-            )
-            
-            if has_business_transactions:
-                # Format for BIP
-                account_number = account_info.get("account_number", "")
-                subjects = self.format_subject_list(include_relationship=False)
-                start_date = self.format_date(self.data.get("review_period", {}).get("start", ""))
-                end_date = self.format_date(self.data.get("review_period", {}).get("end", ""))
-                
-                # Calculate total amount of business transactions
-                business_transactions = [
-                    item for item in credit_breakdown
-                    if any(keyword in str(item.get("description", "")) for keyword in business_keywords)
-                ]
-                total_business_amount = self.format_currency(sum(float(re.sub(r'[^\d.]', '', str(item.get("amount", 0)))) for item in business_transactions))
-                
-                referrals["BIP"] = f"Account #{account_number}, held by {subjects}, was reviewed from {start_date} to {end_date} and identified potentially business in personal activity. The business in personal activity totaled {total_business_amount}. Please inform customer to cease all business in personal activity and open a business account."
-        
-        return referrals
-    
     def generate_with_llm(self) -> str:
         """
-        Generate complete SAR narrative using LLM in a minimized way
+        Generate narrative using LLM assistance
         
         Returns:
             str: Complete SAR narrative
         """
-        # Generate each section separately
-        intro_data = self.prepare_introduction_data()
-        prior_cases_data = self.prepare_prior_cases_data()
-        account_info_data = self.prepare_account_info_data()
-        activity_data = self.prepare_activity_data()
-        conclusion_data = self.prepare_conclusion_data()
-        
-        # Generate each section using the LLM
-        intro = self.llm_client.generate_section("introduction", intro_data)
-        prior_cases = self.llm_client.generate_section("prior_cases", prior_cases_data)
-        account_info = self.llm_client.generate_section("account_info", account_info_data)
-        activity_summary = self.llm_client.generate_section("activity_summary", activity_data)
-        conclusion = self.llm_client.generate_section("conclusion", conclusion_data)
-        
-        # If any section failed, use the template-based approach
-        if not intro or not conclusion:
-            logger.warning("LLM generation failed for critical sections, falling back to template approach")
-            return self.generate_narrative()
+        # Generate sections using LLM
+        introduction = self.llm_client.generate_section("introduction", self.prepare_introduction_data())
+        prior_cases = self.llm_client.generate_section("prior_cases", self.prepare_prior_cases_data())
+        account_info = self.llm_client.generate_section("account_info", self.prepare_account_info_data())
+        activity_summary = self.llm_client.generate_section("activity_summary", self.prepare_activity_data())
+        conclusion = self.llm_client.generate_section("conclusion", self.prepare_conclusion_data())
         
         # Combine sections
         sections = [
-            intro,
-            prior_cases,
-            account_info,
-            self.generate_subject_info(),  # Use template-based subject info
-            activity_summary,
-            self.generate_transaction_samples(),  # Use template-based transaction samples
-            conclusion
+            introduction or self.generate_introduction(),
+            prior_cases or self.generate_prior_cases(),
+            account_info or self.generate_account_info(),
+            self.generate_subject_info(),
+            activity_summary or self.generate_activity_summary(),
+            self.generate_transaction_samples(),
+            conclusion or self.generate_conclusion()
         ]
         
         # Filter out empty sections

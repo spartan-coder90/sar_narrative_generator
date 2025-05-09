@@ -153,8 +153,15 @@ def generate_narrative():
             "warnings": warnings,
             "sections": sections,
             "caseFilename": os.path.basename(case_path),
-            "excelFilename": os.path.basename(excel_path)
+            "excelFilename": os.path.basename(excel_path),
+            # Add Word Control Macro data if available
+            "wordControl": excel_data.get("word_control_macro", {})
         }
+        
+        # Include case and excel data for complete context
+        response["case_data"] = case_data
+        response["excel_data"] = excel_data
+        response["combined_data"] = combined_data
         
         # Save a copy of the processed data for later use
         save_to_json_file({
@@ -162,7 +169,8 @@ def generate_narrative():
             "excel_data": excel_data,
             "combined_data": combined_data,
             "narrative": narrative,
-            "sections": sections
+            "sections": sections,
+            "wordControl": excel_data.get("word_control_macro", {})
         }, os.path.join(upload_folder, 'data.json'))
         
         return jsonify(response), 200
@@ -558,13 +566,20 @@ def generate_from_case():
     
     # Retrieve static case data
     try:
-        from backend.data.case_repository import get_case
+        from backend.data.case_repository import get_case, get_full_case
         case_data = get_case(case_number)
+        full_case_data = get_full_case(case_number)
+        
         if not case_data:
             return jsonify({
                 "status": "error",
                 "message": f"Case number {case_number} not found"
             }), 404
+            
+        # Add full case data to the case_data response if available
+        if full_case_data:
+            case_data["full_data"] = full_case_data
+            
     except Exception as e:
         logger.error(f"Error retrieving case data: {str(e)}")
         return jsonify({
@@ -626,8 +641,15 @@ def generate_from_case():
             "dateGenerated": datetime.now().isoformat(),
             "warnings": warnings,
             "sections": sections,
-            "excelFilename": os.path.basename(excel_path)
+            "excelFilename": os.path.basename(excel_path),
+            "wordControl": excel_data.get("word_control_macro", {}),
+            "fullCaseData": case_data.get("full_data", None)
         }
+        
+        # Include full data for context
+        response["case_data"] = case_data
+        response["excel_data"] = excel_data
+        response["combined_data"] = combined_data
         
         # Save a copy of the processed data for later use
         save_to_json_file({
@@ -635,7 +657,8 @@ def generate_from_case():
             "excel_data": excel_data,
             "combined_data": combined_data,
             "narrative": narrative,
-            "sections": sections
+            "sections": sections,
+            "wordControl": excel_data.get("word_control_macro", {})
         }, os.path.join(upload_folder, 'data.json'))
         
         return jsonify(response), 200

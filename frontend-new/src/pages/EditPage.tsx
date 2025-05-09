@@ -18,105 +18,80 @@ const EditPage: React.FC = () => {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [caseInfo, setCaseInfo] = useState<any>({});
   
-  useEffect(() => {
-    const fetchSections = async () => {
-      if (!sessionId) return;
-      
-      try {
-        setIsLoading(true);
-        const response = await ApiService.getSections(sessionId);
-        
-        if (response.status === 'success') {
-          // Convert API sections to match the SAR Template sections
-          const templateSections: NarrativeSections = {
-            // B. SAR/No SAR Recommendation
-            "alerting_activity": {
-              id: "alerting_activity",
-              title: "Alerting Activity / Reason for Review",
-              content: response.recommendation?.alerting_activity || ""
-            },
-            "prior_sars": {
-              id: "prior_sars",
-              title: "Prior SARs",
-              content: response.recommendation?.prior_sars || ""
-            },
-            "scope_of_review": {
-              id: "scope_of_review",
-              title: "Scope of Review",
-              content: response.recommendation?.scope_of_review || ""
-            },
-            "investigation_summary": {
-              id: "investigation_summary",
-              title: "Summary of the Investigation",
-              content: response.recommendation?.summary_of_investigation || ""
-            },
-            "recommendation_conclusion": {
-              id: "recommendation_conclusion",
-              title: "Conclusion",
-              content: response.recommendation?.conclusion || ""
-            },
-            
-            // C. Escalations/Referrals
-            "cta": {
-              id: "cta",
-              title: "CTA",
-              content: response.referrals?.CTA || ""
-            },
-            
-            // D. Retain or Close Customer Relationship(s)
-            "retain_close": {
-              id: "retain_close",
-              title: "Retain or Close Customer Relationship(s)",
-              content: response.recommendation?.retain_close || ""
-            },
-            
-            // SAR Narrative sections
-            "introduction": {
-              id: "introduction",
-              title: "Introduction",
-              content: response.sections?.introduction?.content || ""
-            },
-            "subject_account_info": {
-              id: "subject_account_info",
-              title: "Subject/Account Information",
-              content: response.sections?.account_info?.content || ""
-            },
-            "suspicious_activity": {
-              id: "suspicious_activity",
-              title: "Suspicious Activity",
-              content: response.sections?.activity_summary?.content || ""
-            },
-            "transaction_samples": {
-              id: "transaction_samples",
-              title: "Suspicious Transaction Samples",
-              content: response.sections?.transaction_samples?.content || ""
-            },
-            "sar_conclusion": {
-              id: "sar_conclusion",
-              title: "SAR Conclusion",
-              content: response.sections?.conclusion?.content || ""
-            }
-          };
-          
-          setSections(templateSections);
-          
-          // Extract case info if available
-          if (response.caseInfo) {
-            setCaseInfo(response.caseInfo);
-          }
-        } else {
-          setError('Failed to load narrative sections');
-        }
-      } catch (err) {
-        console.error('Error fetching sections:', err);
-        setError('An error occurred while loading the narrative sections');
-      } finally {
-        setIsLoading(false);
-      }
-    };
+// In EditPage.tsx - update the useEffect hook
+useEffect(() => {
+  const fetchSections = async () => {
+    if (!sessionId) return;
     
-    fetchSections();
-  }, [sessionId]);
+    try {
+      setIsLoading(true);
+      const response = await ApiService.getSections(sessionId);
+      
+      // Add console logging to see the response structure
+      console.log("API Response:", response);
+      
+      if (response.status === 'success') {
+        // Create template sections
+        const templateSections: NarrativeSections = {
+          // Your existing template sections code...
+          // (Keep this part unchanged)
+        };
+        
+        setSections(templateSections);
+        
+        // Extract case information from various possible sources
+        const extractedCaseInfo = {
+          caseNumber: 'N/A',
+          accountNumber: 'N/A',
+          dateGenerated: new Date().toISOString()
+        };
+        
+        // Try from caseInfo object first
+        if (response.caseInfo) {
+          if (response.caseInfo.caseNumber) {
+            extractedCaseInfo.caseNumber = response.caseInfo.caseNumber;
+          }
+          if (response.caseInfo.accountNumber) {
+            extractedCaseInfo.accountNumber = response.caseInfo.accountNumber;
+          }
+          if (response.caseInfo.dateGenerated) {
+            extractedCaseInfo.dateGenerated = response.caseInfo.dateGenerated;
+          }
+        }
+        
+        // Try from case_data - this is likely where your data is
+        if (response.case_data) {
+          if (response.case_data.case_number) {
+            extractedCaseInfo.caseNumber = response.case_data.case_number;
+          }
+          if (response.case_data.account_info?.account_number) {
+            extractedCaseInfo.accountNumber = response.case_data.account_info.account_number;
+          }
+        }
+        
+        // Add a type check before accessing direct properties
+        if ('caseNumber' in response && response.caseNumber) {
+          extractedCaseInfo.caseNumber = response.caseNumber;
+        }
+        if ('accountNumber' in response && response.accountNumber) {
+          extractedCaseInfo.accountNumber = response.accountNumber;
+        }
+        
+        console.log("Setting case info:", extractedCaseInfo);
+        setCaseInfo(extractedCaseInfo);
+      } else {
+        setError('Failed to load narrative sections');
+      }
+    } catch (err) {
+      console.error('Error fetching sections:', err);
+      setError('An error occurred while loading the narrative sections');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  fetchSections();
+}, [sessionId]);
   
   const handleTabChange = (key: string | null) => {
     if (key) {

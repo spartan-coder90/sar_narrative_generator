@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import re
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 import os
 from backend.utils.math_utils import safe_divide
 from backend.utils.logger import get_logger
@@ -33,7 +33,7 @@ class ExcelProcessor:
             "account_summaries": {},
             "inter_account_transfers": []
         }
-        
+    
     def load_workbook(self) -> bool:
         """
         Load the Excel workbook
@@ -51,28 +51,14 @@ class ExcelProcessor:
             xlsx = pd.ExcelFile(self.file_path)
             sheet_names = xlsx.sheet_names
             
-            # Load identified sheets
+            # Load all sheets
             for sheet_name in sheet_names:
-                # Look for key sheets by checking partial matches
-                sheet_key = None
-                if "activity summ" in sheet_name.lower():
-                    sheet_key = "activity_summary"
-                elif "unusual" in sheet_name.lower() and "activity" in sheet_name.lower():
-                    sheet_key = "unusual_activity"
-                elif "cta" in sheet_name.lower() or ("sample" in sheet_name.lower() and "cta" in sheet_name.lower()):
-                    sheet_key = "cta_sample"
-                elif "bip" in sheet_name.lower() or "business" in sheet_name.lower():
-                    sheet_key = "bip_sample"
-                elif "transaction" in sheet_name.lower():
-                    sheet_key = f"transaction_{sheet_name.lower().replace(' ', '_')}"
-                    
-                if sheet_key:
-                    logger.info(f"Loading sheet: {sheet_name} as {sheet_key}")
-                    self.sheets[sheet_key] = pd.read_excel(xlsx, sheet_name)
-                else:
-                    # Load all sheets for potential transaction data
-                    logger.info(f"Loading unclassified sheet: {sheet_name}")
-                    self.sheets[sheet_name.lower().replace(' ', '_')] = pd.read_excel(xlsx, sheet_name)
+                # Simply load all sheets with original names
+                try:
+                    self.sheets[sheet_name] = pd.read_excel(xlsx, sheet_name)
+                    logger.info(f"Loaded sheet: {sheet_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to load sheet {sheet_name}: {str(e)}")
             
             logger.info(f"Successfully loaded workbook: {os.path.basename(self.file_path)}")
             logger.info(f"Found sheets: {list(self.sheets.keys())}")
@@ -81,6 +67,77 @@ class ExcelProcessor:
             logger.error(f"Error loading Excel file: {str(e)}")
             return False
     
+    def _access_cell(self, row, col_idx):
+        """
+        Safely access a cell using positional indexing
+        
+        Args:
+            row: DataFrame row
+            col_idx: Column index
+            
+        Returns:
+            Cell value or None if invalid
+        """
+        try:
+            if col_idx < len(row):
+                return row.iloc[col_idx]
+            return None
+        except:
+            return None
+
+    def _find_header_row(self, df, header_keywords):
+        """
+        Find header row containing specified keywords
+        
+        Args:
+            df: DataFrame to search
+            header_keywords: List of keywords to look for
+            
+        Returns:
+            tuple: (header_row_idx, header_cols_map) or (None, None)
+        """
+        for idx, row in df.iterrows():
+            # Skip rows with too few non-null values (probably not a header)
+            if row.count() < 3:
+                continue
+                
+            # Convert row to string values and join
+            row_values = [str(val).lower() for val in row if not pd.isna(val)]
+            row_text = ' '.join(row_values)
+            
+            # Check if any pair of keywords exists in the row
+            keyword_pairs = [(k1, k2) for k1 in header_keywords for k2 in header_keywords if k1 != k2]
+            if any(k1 in row_text and k2 in row_text for k1, k2 in keyword_pairs):
+                # Found header row, now map column indices
+                header_cols = {}
+                
+                for i in range(len(row)):
+                    cell_value = self._access_cell(row, i)
+                    if pd.isna(cell_value):
+                        continue
+                    
+                    cell_text = str(cell_value).lower()
+                    
+                    # Map common column types
+                    if any(kw in cell_text for kw in ['account', 'acct']):
+                        header_cols['account'] = i
+                    elif any(kw in cell_text for kw in ['transaction date', 'date']):
+                        header_cols['date'] = i
+                    elif any(kw in cell_text for kw in ['debit/credit', 'dr/cr']):
+                        header_cols['debit_credit'] = i
+                    elif any(kw in cell_text for kw in ['amount', 'sum']):
+                        header_cols['amount'] = i
+                    elif any(kw in cell_text for kw in ['custom language', 'category', 'type']):
+                        header_cols['custom_language'] = i
+                    elif any(kw in cell_text for kw in ['description', 'memo', 'note']):
+                        header_cols['description'] = i
+                
+                # Only return if we found essential columns
+                if 'date' in header_cols or 'amount' in header_cols:
+                    return idx, header_cols
+        
+        return None, None
+    
     def process_activity_summary(self) -> Dict[str, Any]:
         """
         Process Activity Summary tab
@@ -88,13 +145,7 @@ class ExcelProcessor:
         Returns:
             Dict: Extracted activity summary data
         """
-        if "activity_summary" not in self.sheets:
-            logger.warning("Activity Summary sheet not found")
-            return {}
-        
-        df = self.sheets["activity_summary"]
-        
-        # Default values
+        # Look in all sheets for any that might contain activity summary
         activity_summary = {
             "total_amount": 0.0,
             "start_date": None,
@@ -104,872 +155,456 @@ class ExcelProcessor:
             "indicators": []
         }
         
-        try:
-            # Look for total amounts (credits and debits)
-            # First try to find exact column names
-            if 'Total Amount' in df.columns:
-                # Sum all numeric values in Total Amount column
-                total_amount = df['Total Amount'].replace('[\$,]', '', regex=True).astype(float).sum()
-                activity_summary["total_amount"] = total_amount
-            else:
-                # Try to find columns that contain 'total'
-                total_cols = [col for col in df.columns if 'total' in col.lower()]
-                if total_cols:
-                    for col in total_cols:
-                        # Convert to string, remove $ and commas, then to float
-                        df[col] = pd.to_numeric(df[col].astype(str).str.replace('[\$,]', '', regex=True), errors='coerce')
-                    
-                    # Sum all total columns
-                    activity_summary["total_amount"] = df[total_cols].sum().sum()
-            
-            # Find date range
-            date_cols = [col for col in df.columns if 'date' in col.lower()]
-            
-            # First check for date range columns
-            date_range_cols = [col for col in df.columns if 'date range' in col.lower()]
-            if date_range_cols and not pd.isna(df[date_range_cols[0]].iloc[0]):
-                # Extract start and end date from range string
-                date_range = str(df[date_range_cols[0]].iloc[0])
-                dates = re.findall(r'(\d{1,2}/\d{1,2}/\d{2,4})', date_range)
-                if len(dates) >= 2:
-                    activity_summary["start_date"] = dates[0]
-                    activity_summary["end_date"] = dates[1]
-            
-            # If date range not found, look for earliest and latest dates
-            if not activity_summary["start_date"] and date_cols:
-                # Combine all date columns into one series
-                all_dates = pd.Series()
-                for col in date_cols:
-                    if 'start' in col.lower():
-                        activity_summary["start_date"] = min(df[col].dropna()).strftime('%m/%d/%Y')
-                    elif 'end' in col.lower():
-                        activity_summary["end_date"] = max(df[col].dropna()).strftime('%m/%d/%Y') 
-                    else:
-                        all_dates = pd.concat([all_dates, df[col].dropna()])
+        for sheet_name, df in self.sheets.items():
+            # Skip if sheet is too small
+            if df.shape[0] < 5 or df.shape[1] < 5:
+                continue
                 
-                # If still no dates, use all collected dates
-                if not activity_summary["start_date"] and not all_dates.empty:
-                    activity_summary["start_date"] = min(all_dates).strftime('%m/%d/%Y')
-                    activity_summary["end_date"] = max(all_dates).strftime('%m/%d/%Y')
-            
-            # Extract transaction types
-            type_cols = [col for col in df.columns if 'type' in col.lower()]
-            if type_cols:
-                # Get all unique values from type columns, excluding NaN
-                all_types = set()
-                for col in type_cols:
-                    all_types.update(df[col].dropna().unique())
-                
-                # Filter out common non-type values
-                non_types = ['total', 'credit', 'debit', 'sum', 'amount']
-                activity_summary["transaction_types"] = [
-                    t for t in all_types 
-                    if isinstance(t, str) and not any(nt in t.lower() for nt in non_types)
-                ]
-            
-            # Try to extract indicators (this would likely be in a specific field or based on keywords)
-            # This is just a placeholder - adjust based on actual data
-            indicator_keywords = ["structuring", "layering", "cash", "ach", "wire", "foreign", "rapid", "unusual"]
-            
-            # Look for these keywords in all string columns
-            for col in df.select_dtypes(include=['object']).columns:
-                for idx, value in df[col].dropna().items():
-                    if isinstance(value, str):
-                        for keyword in indicator_keywords:
-                            if keyword in value.lower() and keyword not in activity_summary["indicators"]:
-                                activity_summary["indicators"].append(keyword)
-            
-            logger.info(f"Successfully processed Activity Summary: {activity_summary}")
-            return activity_summary
-            
-        except Exception as e:
-            logger.error(f"Error processing Activity Summary: {str(e)}")
-            return activity_summary
-    
-    def process_unusual_activity(self) -> Dict[str, Any]:
-        """
-        Process Unusual Activity tab - extract both summary data and transaction list
-        
-        Returns:
-            Dict: Extracted unusual activity data including summary and transactions
-        """
-        if "unusual_activity" not in self.sheets:
-            logger.warning("Unusual Activity sheet not found")
-            return {"summary": {}, "transactions": []}
-        
-        df = self.sheets["unusual_activity"]
-        
-        unusual_activity = {
-            "summary": {
-                "total_amount": 0.0,
-                "date_range": {"start": "", "end": ""},
-                "description": "",
-                "derived_from": ""
-            },
-            "transactions": []
-        }
-        
-        try:
-            # Extract summary information (typically at the top of the sheet)
-            # Look for total amount - usually clearly labeled
-            total_amount_pattern = r'(?:Unusual Total for SAR|Total Amount).*?[$]?([0-9,.]+)'
-            for idx, row in df.iterrows():
-                row_text = ' '.join([str(cell) for cell in row if pd.notna(cell)])
-                match = re.search(total_amount_pattern, row_text)
-                if match:
-                    unusual_activity["summary"]["total_amount"] = float(match.group(1).replace(',', ''))
-                    break
-            
-            # Look for date range
-            date_range_pattern = r'Date Range:?\s*(\d{1,2}/\d{1,2}/\d{2,4}).*?(\d{1,2}/\d{1,2}/\d{2,4})'
-            for idx, row in df.iterrows():
-                row_text = ' '.join([str(cell) for cell in row if pd.notna(cell)])
-                match = re.search(date_range_pattern, row_text)
-                if match:
-                    unusual_activity["summary"]["date_range"]["start"] = match.group(1)
-                    unusual_activity["summary"]["date_range"]["end"] = match.group(2)
-                    break
-            
-            # Look for derived from (credits/debits)
-            derived_pattern = r'Derived from\s*(.*?)(?:\s*Date Range|\s*$)'
-            for idx, row in df.iterrows():
-                row_text = ' '.join([str(cell) for cell in row if pd.notna(cell)])
-                match = re.search(derived_pattern, row_text)
-                if match:
-                    unusual_activity["summary"]["derived_from"] = match.group(1).strip()
-                    break
-            
-            # Find where transaction list begins - typically has header row with "Date", "Amount", etc.
-            transaction_start_idx = None
-            for idx, row in df.iterrows():
-                row_text = ' '.join([str(cell) for cell in row if pd.notna(cell)]).lower()
-                if ('date' in row_text and 'amount' in row_text) or ('type' in row_text and 'amount' in row_text):
-                    transaction_start_idx = idx + 1  # Start from next row
-                    break
-            
-            if transaction_start_idx is not None:
-                # Extract transactions
-                transaction_df = df.iloc[transaction_start_idx:].reset_index(drop=True)
-                
-                # Identify key columns from the header row
-                header_row = df.iloc[transaction_start_idx - 1]
-                
-                date_col = None
-                amount_col = None
-                type_col = None
-                description_col = None
-                
-                for i, cell in enumerate(header_row):
-                    if pd.isna(cell):
-                        continue
-                    cell_text = str(cell).lower()
-                    if 'date' in cell_text:
-                        date_col = i
-                    elif 'amount' in cell_text or 'sum' in cell_text:
-                        amount_col = i
-                    elif 'type' in cell_text or 'category' in cell_text:
-                        type_col = i
-                    elif 'desc' in cell_text or 'note' in cell_text:
-                        description_col = i
-                
-                # If columns not found by header, try to identify by content
-                if date_col is None or amount_col is None:
-                    for col_idx in range(len(transaction_df.columns)):
-                        col_values = transaction_df.iloc[:, col_idx].dropna()
-                        if col_values.empty:
-                            continue
-                        
-                        # Check if column contains dates
-                        if date_col is None:
-                            date_pattern = r'\d{1,2}/\d{1,2}/\d{2,4}'
-                            if col_values.astype(str).str.match(date_pattern).any():
-                                date_col = col_idx
-                        
-                        # Check if column contains monetary amounts
-                        if amount_col is None:
-                            amount_pattern = r'[$]?[0-9,.]+\.\d{2}'
-                            if col_values.astype(str).str.match(amount_pattern).any():
-                                amount_col = col_idx
-                
-                # Process transactions if we have at least date and amount columns
-                if date_col is not None and amount_col is not None:
-                    for idx, row in transaction_df.iterrows():
-                        # Skip rows without date or amount
-                        if pd.isna(row.iloc[date_col]) or pd.isna(row.iloc[amount_col]):
-                            continue
-                        
-                        transaction = {
-                            "date": row.iloc[date_col],
-                            "amount": row.iloc[amount_col]
-                        }
-                        
-                        # Add type if available
-                        if type_col is not None and not pd.isna(row.iloc[type_col]):
-                            transaction["type"] = row.iloc[type_col]
-                        
-                        # Add description if available
-                        if description_col is not None and not pd.isna(row.iloc[description_col]):
-                            transaction["description"] = row.iloc[description_col]
-                        
-                        # Format date if it's a datetime object
-                        if isinstance(transaction["date"], datetime):
-                            transaction["date"] = transaction["date"].strftime('%m/%d/%Y')
-                        
-                        # Format amount if it's a string with $ or commas
-                        if isinstance(transaction["amount"], str):
-                            amount_match = re.search(r'[$]?([0-9,.]+)', transaction["amount"])
-                            if amount_match:
-                                transaction["amount"] = float(amount_match.group(1).replace(',', ''))
-                        
-                        unusual_activity["transactions"].append(transaction)
-            
-            logger.info(f"Successfully processed Unusual Activity: {len(unusual_activity['transactions'])} transactions")
-            logger.info(f"Unusual activity summary: Total ${unusual_activity['summary']['total_amount']:.2f}, "
-                        f"Date range: {unusual_activity['summary']['date_range']['start']} - "
-                        f"{unusual_activity['summary']['date_range']['end']}")
-            
-            return unusual_activity
-            
-        except Exception as e:
-            logger.error(f"Error processing Unusual Activity: {str(e)}")
-            return {"summary": {}, "transactions": []}
-
-    def process_cta_sample(self) -> Dict[str, Any]:
-        """
-        Process CTA Sample tab - extract and summarize transaction data
-        
-        Returns:
-            Dict: Extracted and summarized CTA transaction data
-        """
-        if "cta_sample" not in self.sheets:
-            logger.warning("CTA Sample sheet not found")
-            return {"transactions": [], "summary": {}}
-        
-        df = self.sheets["cta_sample"]
-        
-        cta_data = {
-            "transactions": [],
-            "summary": {
-                "total_amount": 0.0,
-                "transaction_count": 0,
-                "date_range": {"start": "", "end": ""},
-                "transaction_types": []
-            }
-        }
-        
-        try:
-            # Skip any potential header rows - look for a row that has date and amount
-            transaction_start_idx = 0
-            for idx, row in df.iterrows():
-                row_text = ' '.join([str(cell) for cell in row if pd.notna(cell)]).lower()
-                if ('date' in row_text and 'amount' in row_text) or ('transaction' in row_text and 'amount' in row_text):
-                    transaction_start_idx = idx + 1  # Start from next row
-                    break
-            
-            # Extract transactions
-            transaction_df = df.iloc[transaction_start_idx:].reset_index(drop=True)
-            
-            # Identify key columns
-            date_col = self._find_column(transaction_df, ['date', 'transaction date'])
-            amount_col = self._find_column(transaction_df, ['amount', 'transaction amount'])
-            type_col = self._find_column(transaction_df, ['type', 'transaction type'])
-            description_col = self._find_column(transaction_df, ['description', 'desc', 'note'])
-            
-            # If key columns not found, try to detect them by content
-            if not date_col or not amount_col:
-                for col_idx, col_name in enumerate(transaction_df.columns):
-                    col_values = transaction_df.iloc[:, col_idx].dropna()
-                    if col_values.empty:
-                        continue
+            # Look for key terms in the first 10 rows
+            found_activity_summary = False
+            total_amount_found = False
+            for idx, row in df.iloc[:10].iterrows():
+                row_text = ' '.join([str(val) for val in row if not pd.isna(val)]).lower()
+                if 'activity summary' in row_text or 'total amount' in row_text or 'transaction summary' in row_text:
+                    found_activity_summary = True
                     
-                    # Check if column contains dates
-                    if not date_col:
-                        date_pattern = r'\d{1,2}/\d{1,2}/\d{2,4}'
-                        if col_values.astype(str).str.match(date_pattern).any():
-                            date_col = col_idx
-                    
-                    # Check if column contains monetary amounts
-                    if not amount_col:
-                        amount_pattern = r'[$]?[0-9,.]+\.\d{2}'
-                        if col_values.astype(str).str.match(amount_pattern).any():
-                            amount_col = col_idx
-            
-            # Process transactions if we have at least date and amount columns
-            dates = []
-            types = set()
-            total_amount = 0.0
-            
-            if date_col is not None and amount_col is not None:
-                for idx, row in transaction_df.iterrows():
-                    # Skip rows without date or amount
-                    if pd.isna(row.iloc[date_col]) or pd.isna(row.iloc[amount_col]):
-                        continue
-                    
-                    transaction = {
-                        "date": row.iloc[date_col],
-                        "amount": row.iloc[amount_col]
-                    }
-                    
-                    # Add type if available
-                    if type_col is not None and not pd.isna(row.iloc[type_col]):
-                        transaction["type"] = row.iloc[type_col]
-                        types.add(str(transaction["type"]))
-                    
-                    # Add description if available
-                    if description_col is not None and not pd.isna(row.iloc[description_col]):
-                        transaction["description"] = row.iloc[description_col]
-                    
-                    # Format date if it's a datetime object
-                    if isinstance(transaction["date"], datetime):
-                        transaction["date"] = transaction["date"].strftime('%m/%d/%Y')
-                    
-                    # Format amount if it's a string with $ or commas
-                    if isinstance(transaction["amount"], str):
-                        amount_match = re.search(r'[$]?([0-9,.]+)', transaction["amount"])
-                        if amount_match:
-                            transaction["amount"] = float(amount_match.group(1).replace(',', ''))
-                    
-                    # Add to summary data
-                    dates.append(transaction["date"])
-                    total_amount += float(transaction["amount"])
-                    
-                    cta_data["transactions"].append(transaction)
-            
-            # Update summary
-            cta_data["summary"]["total_amount"] = total_amount
-            cta_data["summary"]["transaction_count"] = len(cta_data["transactions"])
-            cta_data["summary"]["transaction_types"] = list(types)
-            
-            # Set date range if we have dates
-            if dates:
-                try:
-                    # Convert string dates to datetime objects for comparison
-                    date_objects = []
-                    for date_str in dates:
+                    # Try to extract total amount
+                    total_amount_pattern = r'(?:total amount|total suspicious amount|amount).*?[$]?([0-9,.]+)'
+                    match = re.search(total_amount_pattern, row_text)
+                    if match:
                         try:
-                            date_obj = datetime.strptime(date_str, '%m/%d/%Y')
-                            date_objects.append(date_obj)
-                        except ValueError:
-                            # Try alternate format
-                            try:
-                                date_obj = datetime.strptime(date_str, '%Y-%m-%d')
-                                date_objects.append(date_obj)
-                            except ValueError:
-                                continue
-                    
-                    if date_objects:
-                        start_date = min(date_objects).strftime('%m/%d/%Y')
-                        end_date = max(date_objects).strftime('%m/%d/%Y')
-                        cta_data["summary"]["date_range"]["start"] = start_date
-                        cta_data["summary"]["date_range"]["end"] = end_date
-                except Exception as date_err:
-                    logger.warning(f"Error setting date range: {str(date_err)}")
+                            total_amount = float(match.group(1).replace(',', ''))
+                            activity_summary["total_amount"] = total_amount
+                            total_amount_found = True
+                        except:
+                            pass
             
-            logger.info(f"Successfully processed CTA Sample: {len(cta_data['transactions'])} transactions")
-            logger.info(f"CTA summary: Total ${cta_data['summary']['total_amount']:.2f}, "
-                        f"{cta_data['summary']['transaction_count']} transactions")
-            
-            return cta_data
-            
-        except Exception as e:
-            logger.error(f"Error processing CTA Sample: {str(e)}")
-            return {"transactions": [], "summary": {}}
-
-    def process_bip_sample(self) -> Dict[str, Any]:
-        """
-        Process BIP Sample tab - extract and summarize transaction data
-        
-        Returns:
-            Dict: Extracted and summarized BIP transaction data
-        """
-        if "bip_sample" not in self.sheets:
-            logger.warning("BIP Sample sheet not found")
-            return {"transactions": [], "summary": {}}
-        
-        df = self.sheets["bip_sample"]
-        
-        bip_data = {
-            "transactions": [],
-            "summary": {
-                "total_amount": 0.0,
-                "transaction_count": 0,
-                "date_range": {"start": "", "end": ""},
-                "transaction_types": []
-            }
-        }
-        
-        try:
-            # Similar implementation to process_cta_sample
-            # Skip any potential header rows
-            transaction_start_idx = 0
-            for idx, row in df.iterrows():
-                row_text = ' '.join([str(cell) for cell in row if pd.notna(cell)]).lower()
-                if ('date' in row_text and 'amount' in row_text) or ('transaction' in row_text and 'amount' in row_text):
-                    transaction_start_idx = idx + 1  # Start from next row
+            if found_activity_summary:
+                logger.info(f"Found activity summary in sheet: {sheet_name}")
+                
+                # Look for date range
+                for idx, row in df.iterrows():
+                    row_text = ' '.join([str(val) for val in row if not pd.isna(val)]).lower()
+                    date_range_pattern = r'(?:date range|period).*?(\d{1,2}/\d{1,2}/\d{2,4}).*?(\d{1,2}/\d{1,2}/\d{2,4})'
+                    match = re.search(date_range_pattern, row_text)
+                    if match:
+                        activity_summary["start_date"] = match.group(1)
+                        activity_summary["end_date"] = match.group(2)
+                        break
+                
+                # If sheet had activity summary data, break from loop
+                if total_amount_found or activity_summary["start_date"]:
                     break
-            
-            # Extract transactions
-            transaction_df = df.iloc[transaction_start_idx:].reset_index(drop=True)
-            
-            # Identify key columns
-            date_col = self._find_column(transaction_df, ['date', 'transaction date'])
-            amount_col = self._find_column(transaction_df, ['amount', 'transaction amount'])
-            type_col = self._find_column(transaction_df, ['type', 'transaction type'])
-            description_col = self._find_column(transaction_df, ['description', 'desc', 'note'])
-            
-            # If key columns not found, try to detect them by content
-            if not date_col or not amount_col:
-                for col_idx, col_name in enumerate(transaction_df.columns):
-                    col_values = transaction_df.iloc[:, col_idx].dropna()
-                    if col_values.empty:
-                        continue
-                    
-                    # Check if column contains dates
-                    if not date_col:
-                        date_pattern = r'\d{1,2}/\d{1,2}/\d{2,4}'
-                        if col_values.astype(str).str.match(date_pattern).any():
-                            date_col = col_idx
-                    
-                    # Check if column contains monetary amounts
-                    if not amount_col:
-                        amount_pattern = r'[$]?[0-9,.]+\.\d{2}'
-                        if col_values.astype(str).str.match(amount_pattern).any():
-                            amount_col = col_idx
-            
-            # Process transactions if we have at least date and amount columns
-            dates = []
-            types = set()
-            total_amount = 0.0
-            
-            if date_col is not None and amount_col is not None:
-                for idx, row in transaction_df.iterrows():
-                    # Skip rows without date or amount
-                    if pd.isna(row.iloc[date_col]) or pd.isna(row.iloc[amount_col]):
-                        continue
-                    
-                    transaction = {
-                        "date": row.iloc[date_col],
-                        "amount": row.iloc[amount_col]
-                    }
-                    
-                    # Add type if available
-                    if type_col is not None and not pd.isna(row.iloc[type_col]):
-                        transaction["type"] = row.iloc[type_col]
-                        types.add(str(transaction["type"]))
-                    
-                    # Add description if available
-                    if description_col is not None and not pd.isna(row.iloc[description_col]):
-                        transaction["description"] = row.iloc[description_col]
-                    
-                    # Format date if it's a datetime object
-                    if isinstance(transaction["date"], datetime):
-                        transaction["date"] = transaction["date"].strftime('%m/%d/%Y')
-                    
-                    # Format amount if it's a string with $ or commas
-                    if isinstance(transaction["amount"], str):
-                        amount_match = re.search(r'[$]?([0-9,.]+)', transaction["amount"])
-                        if amount_match:
-                            transaction["amount"] = float(amount_match.group(1).replace(',', ''))
-                    
-                    # Add to summary data
-                    dates.append(transaction["date"])
-                    total_amount += float(transaction["amount"])
-                    
-                    bip_data["transactions"].append(transaction)
-            
-            # Update summary
-            bip_data["summary"]["total_amount"] = total_amount
-            bip_data["summary"]["transaction_count"] = len(bip_data["transactions"])
-            bip_data["summary"]["transaction_types"] = list(types)
-            
-            # Set date range if we have dates
-            if dates:
-                try:
-                    # Convert string dates to datetime objects for comparison
-                    date_objects = []
-                    for date_str in dates:
-                        try:
-                            date_obj = datetime.strptime(date_str, '%m/%d/%Y')
-                            date_objects.append(date_obj)
-                        except ValueError:
-                            # Try alternate format
+        
+        # If no date range found, try to find dates from actual transaction data
+        if not activity_summary["start_date"] or not activity_summary["end_date"]:
+            all_dates = []
+            for sheet_name, df in self.sheets.items():
+                header_row_idx, header_cols = self._find_header_row(df, ['date', 'transaction'])
+                if header_row_idx is not None and 'date' in header_cols:
+                    for row_idx in range(header_row_idx + 1, len(df)):
+                        row = df.iloc[row_idx]
+                        date_value = self._access_cell(row, header_cols['date'])
+                        if not pd.isna(date_value):
                             try:
-                                date_obj = datetime.strptime(date_str, '%Y-%m-%d')
-                                date_objects.append(date_obj)
-                            except ValueError:
-                                continue
-                    
-                    if date_objects:
-                        start_date = min(date_objects).strftime('%m/%d/%Y')
-                        end_date = max(date_objects).strftime('%m/%d/%Y')
-                        bip_data["summary"]["date_range"]["start"] = start_date
-                        bip_data["summary"]["date_range"]["end"] = end_date
-                except Exception as date_err:
-                    logger.warning(f"Error setting date range: {str(date_err)}")
+                                if isinstance(date_value, datetime):
+                                    all_dates.append(date_value)
+                                else:
+                                    # Try to parse string date
+                                    date_str = str(date_value)
+                                    for fmt in ['%m/%d/%Y', '%Y-%m-%d', '%m-%d-%Y']:
+                                        try:
+                                            date_obj = datetime.strptime(date_str, fmt)
+                                            all_dates.append(date_obj)
+                                            break
+                                        except:
+                                            pass
+                            except:
+                                pass
             
-            logger.info(f"Successfully processed BIP Sample: {len(bip_data['transactions'])} transactions")
-            logger.info(f"BIP summary: Total ${bip_data['summary']['total_amount']:.2f}, "
-                        f"{bip_data['summary']['transaction_count']} transactions")
-            
-            return bip_data
-            
-        except Exception as e:
-            logger.error(f"Error processing BIP Sample: {str(e)}")
-            return {"transactions": [], "summary": {}}
+            if all_dates:
+                # Set start and end dates from transaction dates
+                start_date = min(all_dates).strftime('%m/%d/%Y')
+                end_date = max(all_dates).strftime('%m/%d/%Y')
+                
+                if not activity_summary["start_date"]:
+                    activity_summary["start_date"] = start_date
+                if not activity_summary["end_date"]:
+                    activity_summary["end_date"] = end_date
+        
+        return activity_summary
     
-    def summarize_transactions(self, sheet_data):
+    def process_all_transactions(self) -> Dict[str, Any]:
         """
-        Summarize transaction data without analysis of patterns
-        
-        Args:
-            sheet_data: DataFrame containing transaction data
-            
-        Returns:
-            Dict: Summary of transaction data including totals and breakdowns
-        """
-        # Initialize summary structure
-        summary = {
-            "total_credits": 0.0,
-            "total_debits": 0.0,
-            "credit_breakdown": [],
-            "debit_breakdown": [],
-            "transaction_count": 0
-        }
-        
-        # Try to identify key columns
-        amount_col = self._find_column(sheet_data, ['amount', 'transaction amount'])
-        type_col = self._find_column(sheet_data, ['type', 'transaction type'])
-        debit_credit_col = self._find_column(sheet_data, ['debit/credit', 'dr/cr'])
-        
-        if not amount_col:
-            logger.warning("Could not find transaction amount column")
-            return summary
-        
-        # If no explicit debit/credit column, check for separate debit and credit columns
-        debit_col = None
-        credit_col = None
-        if not debit_credit_col:
-            debit_col = self._find_column(sheet_data, ['debit', 'dr'])
-            credit_col = self._find_column(sheet_data, ['credit', 'cr'])
-        
-        # Process transactions
-        try:
-            # Create dictionaries to track totals by type
-            credit_totals = {}
-            debit_totals = {}
-            credit_counts = {}
-            debit_counts = {}
-            
-            for _, row in sheet_data.iterrows():
-                # Skip rows with missing amount
-                if amount_col not in row or pd.isna(row[amount_col]):
-                    continue
-                    
-                # Get transaction amount as float
-                amount = row[amount_col]
-                if isinstance(amount, str):
-                    amount = float(re.sub(r'[$,]', '', amount))
-                
-                # Get transaction type
-                txn_type = "Unknown"
-                if type_col and type_col in row and not pd.isna(row[type_col]):
-                    txn_type = row[type_col]
-                
-                # Determine if credit or debit
-                is_credit = False
-                
-                if debit_credit_col and debit_credit_col in row:
-                    is_credit = str(row[debit_credit_col]).lower() in ['credit', 'cr', '+']
-                elif debit_col and credit_col:
-                    # Check if amount is in credit column
-                    if credit_col in row and not pd.isna(row[credit_col]):
-                        is_credit = True
-                else:
-                    # Fallback: Try to determine from type
-                    if type_col and isinstance(txn_type, str):
-                        is_credit = '+' in txn_type or 'credit' in txn_type.lower()
-                    else:
-                        # Default assumption based on amount sign
-                        is_credit = amount > 0
-                
-                # Add to appropriate total
-                if is_credit:
-                    summary["total_credits"] += amount
-                    if txn_type in credit_totals:
-                        credit_totals[txn_type] += amount
-                        credit_counts[txn_type] += 1
-                    else:
-                        credit_totals[txn_type] = amount
-                        credit_counts[txn_type] = 1
-                else:
-                    summary["total_debits"] += amount
-                    if txn_type in debit_totals:
-                        debit_totals[txn_type] += amount
-                        debit_counts[txn_type] += 1
-                    else:
-                        debit_totals[txn_type] = amount
-                        debit_counts[txn_type] = 1
-                
-                summary["transaction_count"] += 1
-            
-            # Calculate percentages and build breakdown
-            for txn_type, total in credit_totals.items():
-                percent = safe_divide(total, summary["total_credits"], 0) * 100
-                summary["credit_breakdown"].append({
-                    "type": txn_type,
-                    "amount": total,
-                    "percent": percent,
-                    "count": credit_counts[txn_type]
-                })
-            
-            for txn_type, total in debit_totals.items():
-                percent = safe_divide(total, summary["total_debits"], 0) * 100
-                summary["debit_breakdown"].append({
-                    "type": txn_type,
-                    "amount": total,
-                    "percent": percent, 
-                    "count": debit_counts[txn_type]
-                })
-            
-            # Sort breakdowns by amount descending
-            summary["credit_breakdown"] = sorted(summary["credit_breakdown"], key=lambda x: x["amount"], reverse=True)
-            summary["debit_breakdown"] = sorted(summary["debit_breakdown"], key=lambda x: x["amount"], reverse=True)
-            
-            logger.info(f"Summarized {summary['transaction_count']} transactions")
-            logger.info(f"Total credits: ${summary['total_credits']:.2f}, Total debits: ${summary['total_debits']:.2f}")
-            
-            return summary
-        
-        except Exception as e:
-            logger.error(f"Error summarizing transactions: {str(e)}")
-            return summary
-
-    def _find_column(self, df, possible_names):
-        """
-        Find a column in DataFrame that matches one of the possible names
-        
-        Args:
-            df: DataFrame to search
-            possible_names: List of possible column name patterns
-            
-        Returns:
-            str: Matching column name or None if not found
-        """
-        if df is None or df.empty:
-            return None
-            
-        # Try exact matches first
-        for col in df.columns:
-            if any(name == col.lower() for name in possible_names):
-                return col
-        
-        # Try partial matches
-        for col in df.columns:
-            if any(name in col.lower() for name in possible_names):
-                return col
-        
-        return None
-    
-    def summarize_multi_account_transactions(self):
-        """
-        Summarize transactions across multiple accounts without analyzing patterns
+        Process all transaction data across sheets
         
         Returns:
-            Dict: Transaction summaries grouped by account and consolidated totals
+            Dict: All transactions and summaries
         """
-        # Results structure
-        results = {
-            "accounts": {},           # Account-specific summaries
-            "consolidated": {          # Consolidated across all accounts
+        # Find all transaction data across all sheets
+        transactions_result = {
+            "all_transactions": [],
+            "account_transactions": {},
+            "transaction_types": [],
+            "summary": {
                 "total_credits": 0.0,
                 "total_debits": 0.0,
-                "credit_breakdown": [],
-                "debit_breakdown": [],
+                "total_amount": 0.0,
                 "transaction_count": 0
-            },
-            "inter_account_transfers": []  # Simple listing of transfers between accounts
+            }
         }
         
-        # Identify all transaction tabs
-        transaction_tabs = []
-        for sheet_name in self.sheets:
-            # Look for transaction-related tabs
-            if any(keyword in sheet_name.lower() for keyword in ['transaction', 'activity', 'sample']):
-                transaction_tabs.append(sheet_name)
-        
-        # Combine all transaction data
-        all_transactions = pd.DataFrame()
-        for tab in transaction_tabs:
-            if tab in self.sheets:
-                df = self.sheets[tab]
-                # Add source tab column if not present
-                if 'source_tab' not in df.columns:
-                    df['source_tab'] = tab
-                all_transactions = pd.concat([all_transactions, df])
-        
-        if all_transactions.empty:
-            logger.warning("No transaction data found in workbook")
-            return results
-        
-        # Identify account column
-        account_col = self._find_column(all_transactions, ['account', 'account number', 'acct'])
-        if not account_col:
-            logger.warning("Could not identify account column, assuming single account")
-            # Process as single account using the account from case data
-            single_account_summary = self.summarize_transactions(all_transactions)
+        # Process each sheet
+        for sheet_name, df in self.sheets.items():
+            # Skip if sheet is too small
+            if df.shape[0] < 5 or df.shape[1] < 3:
+                continue
+                
+            # Find header row for transactions
+            header_keywords = ['account', 'date', 'amount', 'transaction', 'debit', 'credit']
+            header_row_idx, header_cols = self._find_header_row(df, header_keywords)
             
-            # Use the account number from first row if available, otherwise "unknown"
-            account_number = "unknown"
-            for col in all_transactions.columns:
-                if "account" in col.lower() and not all_transactions[col].empty:
-                    account_number = str(all_transactions[col].iloc[0])
-                    break
-            
-            results["accounts"][account_number] = single_account_summary
-            results["consolidated"] = single_account_summary
-            return results
-        
-        # Get unique accounts
-        unique_accounts = all_transactions[account_col].dropna().unique()
-        logger.info(f"Found {len(unique_accounts)} unique accounts in transaction data")
-        
-        # Process transactions for each account
-        for account in unique_accounts:
-            account_transactions = all_transactions[all_transactions[account_col] == account]
-            account_summary = self.summarize_transactions(account_transactions)
-            
-            # Add to results
-            account_str = str(account)
-            results["accounts"][account_str] = account_summary
-            
-            # Add to consolidated totals
-            results["consolidated"]["total_credits"] += account_summary["total_credits"]
-            results["consolidated"]["total_debits"] += account_summary["total_debits"]
-            results["consolidated"]["transaction_count"] += account_summary["transaction_count"]
-        
-        # Aggregate breakdown categories across accounts
-        credit_types = {}
-        debit_types = {}
-        
-        for account, summary in results["accounts"].items():
-            for credit in summary.get("credit_breakdown", []):
-                txn_type = credit["type"]
-                if txn_type in credit_types:
-                    credit_types[txn_type]["amount"] += credit["amount"]
-                    credit_types[txn_type]["count"] += credit["count"]
-                else:
-                    credit_types[txn_type] = {
-                        "amount": credit["amount"],
-                        "count": credit["count"]
+            if header_row_idx is not None:
+                logger.info(f"Found transaction data in sheet: {sheet_name}")
+                
+                # Process transactions from this sheet
+                sheet_transactions = []
+                
+                for row_idx in range(header_row_idx + 1, len(df)):
+                    row = df.iloc[row_idx]
+                    
+                    # Skip rows without essential data
+                    date_value = self._access_cell(row, header_cols.get('date')) if 'date' in header_cols else None
+                    amount_value = self._access_cell(row, header_cols.get('amount')) if 'amount' in header_cols else None
+                    
+                    if pd.isna(date_value) and pd.isna(amount_value):
+                        continue
+                    
+                    # Basic transaction data
+                    transaction = {
+                        "source_sheet": sheet_name
                     }
+                    
+                    # Extract date
+                    if 'date' in header_cols and not pd.isna(date_value):
+                        transaction["date"] = date_value
+                        # Format date if needed
+                        if isinstance(transaction["date"], datetime):
+                            transaction["date"] = transaction["date"].strftime('%m/%d/%Y')
+                    
+                    # Extract amount (this is critical - only add to all_transactions if we have an amount)
+                    if 'amount' in header_cols and not pd.isna(amount_value):
+                        amount_value = self._parse_amount(amount_value)
+                        if amount_value != 0:  # Skip zero amounts
+                            transaction["amount"] = amount_value
+                        else:
+                            continue  # Skip this transaction if amount is zero
+                    else:
+                        continue  # Skip this transaction if no amount
+                    
+                    # Extract account
+                    if 'account' in header_cols:
+                        account_value = self._access_cell(row, header_cols['account'])
+                        if not pd.isna(account_value):
+                            transaction["account"] = str(account_value)
+                    
+                    # Extract debit/credit indicator
+                    if 'debit_credit' in header_cols:
+                        dc_value = self._access_cell(row, header_cols['debit_credit'])
+                        if not pd.isna(dc_value):
+                            transaction["debit_credit"] = str(dc_value)
+                            # Determine if credit transaction
+                            is_credit = str(dc_value).lower() in ['credit', 'cr', 'c', '+']
+                            transaction["is_credit"] = is_credit
+                    
+                    # Extract description or memo
+                    if 'description' in header_cols:
+                        desc_value = self._access_cell(row, header_cols['description'])
+                        if not pd.isna(desc_value):
+                            transaction["description"] = str(desc_value)
+                    
+                    # Extract transaction type or custom language
+                    if 'custom_language' in header_cols:
+                        cl_value = self._access_cell(row, header_cols['custom_language'])
+                        if not pd.isna(cl_value):
+                            transaction["custom_language"] = str(cl_value)
+                            
+                            # Add to transaction types list
+                            txn_type = str(cl_value)
+                            if txn_type not in transactions_result["transaction_types"]:
+                                transactions_result["transaction_types"].append(txn_type)
+                    
+                    # Now that we've verified this transaction has an amount, add it to our results
+                    sheet_transactions.append(transaction)
+                    transactions_result["all_transactions"].append(transaction)
+                    
+                    # Update summary data
+                    amount = transaction["amount"]  # We know this exists now
+                    transactions_result["summary"]["total_amount"] += amount
+                    
+                    if transaction.get("is_credit", False):
+                        transactions_result["summary"]["total_credits"] += amount
+                    else:
+                        transactions_result["summary"]["total_debits"] += amount
+                    
+                    transactions_result["summary"]["transaction_count"] += 1
+                    
+                    # Group by account
+                    if "account" in transaction:
+                        account = transaction["account"]
+                        if account not in transactions_result["account_transactions"]:
+                            transactions_result["account_transactions"][account] = []
+                        
+                        transactions_result["account_transactions"][account].append(transaction)
+                
+                logger.info(f"Extracted {len(sheet_transactions)} transactions from sheet: {sheet_name}")
+        
+        # Summarize account transactions
+        account_summaries = {}
+        
+        for account, txns in transactions_result["account_transactions"].items():
+            account_summary = {
+                "total_credits": sum(t.get("amount", 0) for t in txns if t.get("is_credit", False)),
+                "total_debits": sum(t.get("amount", 0) for t in txns if not t.get("is_credit", False)),
+                "total_amount": sum(t.get("amount", 0) for t in txns),
+                "transaction_count": len(txns),
+                "transactions_by_type": {}
+            }
             
-            for debit in summary.get("debit_breakdown", []):
-                txn_type = debit["type"]
-                if txn_type in debit_types:
-                    debit_types[txn_type]["amount"] += debit["amount"]
-                    debit_types[txn_type]["count"] += debit["count"]
-                else:
-                    debit_types[txn_type] = {
-                        "amount": debit["amount"],
-                        "count": debit["count"]
+            # Group by transaction type
+            for txn in txns:
+                txn_type = txn.get("custom_language", "Other")
+                if txn_type not in account_summary["transactions_by_type"]:
+                    account_summary["transactions_by_type"][txn_type] = {
+                        "count": 0,
+                        "total": 0.0,
+                        "credits": 0.0,
+                        "debits": 0.0
                     }
+                
+                amount = txn["amount"]
+                type_summary = account_summary["transactions_by_type"][txn_type]
+                type_summary["count"] += 1
+                type_summary["total"] += amount
+                
+                if txn.get("is_credit", False):
+                    type_summary["credits"] += amount
+                else:
+                    type_summary["debits"] += amount
+            
+            # Add transaction type summary
+            for txn in txns:
+                if "amount" not in txn:
+                    continue
+                    
+                txn_type = txn.get("custom_language", "Other")
+                if txn_type not in account_summary["transactions_by_type"]:
+                    account_summary["transactions_by_type"][txn_type] = {
+                        "count": 0,
+                        "total": 0.0,
+                        "credits": 0.0,
+                        "debits": 0.0
+                    }
+                
+                type_summary = account_summary["transactions_by_type"][txn_type]
+                type_summary["count"] += 1
+                type_summary["total"] += txn["amount"]
+                
+                if txn.get("is_credit", False):
+                    type_summary["credits"] += txn["amount"]
+                else:
+                    type_summary["debits"] += txn["amount"]
+            
+            # Assign to account summaries
+            account_summaries[account] = account_summary
         
-        # Calculate percentages and format breakdowns
-        for txn_type, data in credit_types.items():
-            percent = (data["amount"] / results["consolidated"]["total_credits"] * 100) if results["consolidated"]["total_credits"] > 0 else 0
-            results["consolidated"]["credit_breakdown"].append({
-                "type": txn_type,
-                "amount": data["amount"],
-                "percent": percent,
-                "count": data["count"]
-            })
+        # Categorize transactions by type
+        category_summary = self._summarize_by_transaction_category(transactions_result["all_transactions"])
+        transactions_result["category_summary"] = category_summary
         
-        for txn_type, data in debit_types.items():
-            percent = (data["amount"] / results["consolidated"]["total_debits"] * 100) if results["consolidated"]["total_debits"] > 0 else 0
-            results["consolidated"]["debit_breakdown"].append({
-                "type": txn_type,
-                "amount": data["amount"],
-                "percent": percent,
-                "count": data["count"]
-            })
+        # Set global account summaries
+        self.data["account_summaries"] = account_summaries
         
-        # Sort breakdowns by amount descending
-        results["consolidated"]["credit_breakdown"] = sorted(
-            results["consolidated"]["credit_breakdown"], 
-            key=lambda x: x["amount"], 
-            reverse=True
-        )
-        results["consolidated"]["debit_breakdown"] = sorted(
-            results["consolidated"]["debit_breakdown"], 
-            key=lambda x: x["amount"], 
-            reverse=True
-        )
-        
-        # Simply identify inter-account transfers without analysis
-        self._list_inter_account_transfers(all_transactions, results)
-        
-        return results
+        return transactions_result
     
-    def _list_inter_account_transfers(self, transactions, results):
+    def _parse_amount(self, amount_value: Any) -> float:
         """
-        List transfers between accounts without analyzing patterns
+        Parse amount value to float
         
         Args:
-            transactions: DataFrame containing all transactions
-            results: Results dictionary to update with transfer info
+            amount_value: Amount value to parse
+            
+        Returns:
+            float: Parsed amount
         """
-        # Find relevant columns
-        account_col = self._find_column(transactions, ['account', 'account number', 'acct'])
-        type_col = self._find_column(transactions, ['type', 'transaction type'])
-        amount_col = self._find_column(transactions, ['amount', 'transaction amount'])
-        date_col = self._find_column(transactions, ['date', 'transaction date'])
-        counterparty_col = self._find_column(transactions, ['counterparty', 'recipient', 'sender', 'beneficiary'])
+        if pd.isna(amount_value):
+            return 0.0
         
-        if not account_col or not type_col or not amount_col:
-            return
+        if isinstance(amount_value, (int, float)):
+            return float(amount_value)
         
-        # Look for transfers
-        transfer_keywords = ['transfer', 'wire', 'payment to', 'payment from']
-        potential_transfers = transactions[
-            transactions[type_col].astype(str).str.lower().apply(
-                lambda x: any(keyword in x for keyword in transfer_keywords)
-            )
-        ]
+        # Handle string values with $ and commas
+        if isinstance(amount_value, str):
+            # Remove $ and commas
+            cleaned = amount_value.replace('$', '').replace(',', '')
+            try:
+                return float(cleaned)
+            except ValueError:
+                return 0.0
         
-        if potential_transfers.empty:
-            return
+        return 0.0
+    
+    def _summarize_by_transaction_category(self, transactions: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Summarize transactions by category
         
-        # Just list the transfers between known accounts
-        transfers = []
-        unique_accounts = list(results["accounts"].keys())
-        
-        for _, transfer in potential_transfers.iterrows():
-            source_account = str(transfer[account_col])
-            amount = float(transfer[amount_col]) if isinstance(transfer[amount_col], (int, float)) else 0
-            date = transfer[date_col] if date_col and date_col in transfer else "unknown"
+        Args:
+            transactions: List of transaction dictionaries
             
-            # If we have counterparty information, check for matches to other accounts
-            target_account = "external"
-            if counterparty_col and counterparty_col in transfer:
-                counterparty = str(transfer[counterparty_col])
-                # Check if counterparty matches any known account
-                for account in unique_accounts:
-                    if account != source_account and (account in counterparty or counterparty in account):
-                        target_account = account
-                        break
+        Returns:
+            Dict: Summary of transaction data
+        """
+        # Prepare summary structure
+        summary = {
+            "categories": [],
+            "total_credits": 0,
+            "total_debits": 0,
+            "total_credit_transactions": 0,
+            "total_debit_transactions": 0
+        }
+        
+        # Filter transactions with amount field
+        valid_transactions = [t for t in transactions if "amount" in t]
+        if not valid_transactions:
+            logger.warning("No transactions with amount field found for summary")
+            return summary
+        
+        # Group by category and debit/credit
+        grouped_data = {}
+        
+        for transaction in valid_transactions:
+            amount = transaction["amount"]
             
-            # Add to transfers list
-            transfers.append({
-                "date": date,
-                "from_account": source_account,
-                "to_account": target_account,
-                "amount": amount,
-                "type": transfer[type_col]
+            # Determine category
+            category = transaction.get("custom_language", "Other")
+            if not category:
+                category = "Other"
+            
+            # Determine if credit or debit
+            is_credit = False
+            if "is_credit" in transaction:
+                is_credit = transaction["is_credit"]
+            elif "debit_credit" in transaction:
+                is_credit = transaction["debit_credit"].lower() in ['credit', 'cr', 'c', '+']
+            
+            # Initialize category if not exists
+            if category not in grouped_data:
+                grouped_data[category] = {
+                    "credit_amount": 0,
+                    "debit_amount": 0,
+                    "credit_count": 0,
+                    "debit_count": 0
+                }
+            
+            # Add to totals
+            if is_credit:
+                grouped_data[category]["credit_amount"] += amount
+                grouped_data[category]["credit_count"] += 1
+                summary["total_credits"] += amount
+                summary["total_credit_transactions"] += 1
+            else:
+                grouped_data[category]["debit_amount"] += amount
+                grouped_data[category]["debit_count"] += 1
+                summary["total_debits"] += amount
+                summary["total_debit_transactions"] += 1
+        
+        # Format the categories for output
+        for category, data in grouped_data.items():
+            summary["categories"].append({
+                "Custom Language Transaction Category": category,
+                "Credits ($ Total)": data["credit_amount"],
+                "Debits ($ Total)": data["debit_amount"],
+                "Credits (# Transactions)": data["credit_count"],
+                "Debits (# Transactions)": data["debit_count"]
             })
         
-        # Sort by date
-        transfers = sorted(transfers, key=lambda x: x["date"])
-        results["inter_account_transfers"] = transfers
+        return summary
+    
+    def _identify_inter_account_transfers(self, all_transactions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Identify transfers between accounts
+        
+        Args:
+            all_transactions: List of all transactions
+            
+        Returns:
+            List: Identified inter-account transfers
+        """
+        # Get unique accounts
+        accounts = set()
+        for txn in all_transactions:
+            if "account" in txn:
+                accounts.add(txn["account"])
+        
+        # Skip if only one account
+        if len(accounts) <= 1:
+            return []
+        
+        # Look for transfers
+        transfers = []
+        
+        # Group transactions by date
+        txns_by_date = {}
+        for txn in all_transactions:
+            if "date" not in txn or "amount" not in txn:
+                continue
+                
+            date = txn["date"]
+            if date not in txns_by_date:
+                txns_by_date[date] = []
+            
+            txns_by_date[date].append(txn)
+        
+        # Look for pairs of transactions on the same day with opposite directions
+        for date, date_txns in txns_by_date.items():
+            if len(date_txns) < 2:
+                continue
+                
+            # Find potential transfers
+            for i, txn1 in enumerate(date_txns):
+                amount1 = txn1.get("amount", 0)
+                is_credit1 = txn1.get("is_credit", False)
+                account1 = txn1.get("account", "")
+                
+                if not account1 or amount1 == 0:
+                    continue
+                
+                # Look for matching opposite transaction
+                for j, txn2 in enumerate(date_txns):
+                    if i == j:
+                        continue
+                        
+                    amount2 = txn2.get("amount", 0)
+                    is_credit2 = txn2.get("is_credit", False)
+                    account2 = txn2.get("account", "")
+                    
+                    if not account2 or account1 == account2:
+                        continue
+                    
+                    # Check if amounts match and directions are opposite
+                    if abs(amount1 - amount2) < 0.01 and is_credit1 != is_credit2:
+                        # Found likely transfer
+                        transfers.append({
+                            "date": date,
+                            "from_account": account1 if not is_credit1 else account2,
+                            "to_account": account2 if not is_credit1 else account1,
+                            "amount": amount1,
+                            "description": txn1.get("description", "") or txn2.get("description", ""),
+                            "custom_language": txn1.get("custom_language", "") or txn2.get("custom_language", "")
+                        })
+                        break
+        
+        return transfers
     
     def process(self) -> Dict[str, Any]:
         """
@@ -981,25 +616,65 @@ class ExcelProcessor:
         if not self.load_workbook():
             return self.data
         
-        # Process specialized tabs with direct extraction
-        logger.info("Processing Activity Summary tab...")
+        # Process activity summary
+        logger.info("Processing Activity Summary...")
         self.data["activity_summary"] = self.process_activity_summary()
         
-        logger.info("Processing Unusual Activity tab...")
-        self.data["unusual_activity"] = self.process_unusual_activity()
+        # Process all transaction data
+        logger.info("Processing all transaction data...")
+        transaction_results = self.process_all_transactions()
         
-        logger.info("Processing CTA Sample tab...")
-        self.data["cta_sample"] = self.process_cta_sample()
+        # Store results in data structure
+        self.data["unusual_activity"]["transactions"] = transaction_results["all_transactions"]
+        self.data["unusual_activity"]["summary"] = {
+            "total_amount": transaction_results["summary"]["total_amount"],
+            "date_range": {
+                "start": self.data["activity_summary"].get("start_date", ""),
+                "end": self.data["activity_summary"].get("end_date", "")
+            }
+        }
         
-        logger.info("Processing BIP Sample tab...")
-        self.data["bip_sample"] = self.process_bip_sample()
+        # Set transaction summary
+        self.data["transaction_summary"] = {
+            "total_credits": transaction_results["summary"]["total_credits"],
+            "total_debits": transaction_results["summary"]["total_debits"],
+            "transaction_count": transaction_results["summary"]["transaction_count"],
+            "credit_breakdown": [],
+            "debit_breakdown": []
+        }
         
-        # Process transaction summaries with multi-account awareness
-        logger.info("Processing transaction summaries across accounts...")
-        multi_account_summary = self.summarize_multi_account_transactions()
-        self.data["transaction_summary"] = multi_account_summary.get("consolidated", {})
-        self.data["account_summaries"] = multi_account_summary.get("accounts", {})
-        self.data["inter_account_transfers"] = multi_account_summary.get("inter_account_transfers", [])
+        # Format credit and debit breakdowns
+        for category in transaction_results["category_summary"]["categories"]:
+            category_name = category["Custom Language Transaction Category"]
+            credit_amount = category["Credits ($ Total)"]
+            debit_amount = category["Debits ($ Total)"]
+            credit_count = category["Credits (# Transactions)"]
+            debit_count = category["Debits (# Transactions)"]
+            
+            if credit_amount > 0:
+                self.data["transaction_summary"]["credit_breakdown"].append({
+                    "type": category_name,
+                    "amount": credit_amount,
+                    "count": credit_count,
+                    "percent": safe_divide(credit_amount, transaction_results["summary"]["total_credits"], 0) * 100
+                })
+            
+            if debit_amount > 0:
+                self.data["transaction_summary"]["debit_breakdown"].append({
+                    "type": category_name,
+                    "amount": debit_amount,
+                    "count": debit_count,
+                    "percent": safe_divide(debit_amount, transaction_results["summary"]["total_debits"], 0) * 100
+                })
+        
+        # Sort breakdowns
+        self.data["transaction_summary"]["credit_breakdown"] = sorted(
+            self.data["transaction_summary"]["credit_breakdown"], key=lambda x: x["amount"], reverse=True)
+        self.data["transaction_summary"]["debit_breakdown"] = sorted(
+            self.data["transaction_summary"]["debit_breakdown"], key=lambda x: x["amount"], reverse=True)
+        
+        # Identify inter-account transfers
+        logger.info("Identifying inter-account transfers...")
+        self.data["inter_account_transfers"] = self._identify_inter_account_transfers(transaction_results["all_transactions"])
         
         return self.data
-

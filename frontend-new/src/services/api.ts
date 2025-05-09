@@ -58,55 +58,44 @@ export const ApiService = {
   },
   
   // Get narrative sections for a session
-  getSections: async (sessionId: string): Promise<SectionResponse> => {
-    try {
-      const response = await api.get(`/sections/${sessionId}`);
+// Most effective implementation for getSections in api.ts
+// In src/services/api.ts
+getSections: async (sessionId: string): Promise<SectionResponse> => {
+  try {
+    const response = await api.get(`/sections/${sessionId}`);
+    
+    if (response.data.status === 'success') {
+      // Create a properly typed result object
+      const result: SectionResponse = {
+        status: 'success',
+        sections: response.data.sections,
+        case_data: response.data.case_data,
+        excel_data: response.data.excel_data,
+        caseInfo: response.data.caseInfo,
+        recommendation: response.data.recommendation,
+        referrals: response.data.referrals
+      };
       
-      // If the response doesn't include properly formatted sections,
-      // transform the data to match the expected format
-      if (response.data.status === 'success' && response.data.sections) {
-        // The response already has sections in the expected format
-        return {
-          ...response.data,
-          caseInfo: {
-            caseNumber: response.data.case_data?.case_number || '',
-            accountNumber: response.data.case_data?.account_info?.account_number || '',
-            dateGenerated: response.data.dateGenerated || new Date().toISOString()
-          },
-          // Map additional section data if needed
-          recommendation: {
-            alerting_activity: response.data.sections.introduction?.content || '',
-            prior_sars: response.data.sections.prior_cases?.content || '',
-            scope_of_review: '',
-            summary_of_investigation: response.data.sections.activity_summary?.content || '',
-            conclusion: response.data.sections.conclusion?.content || '',
-            retain_close: ''
-          },
-          referrals: {
-            CTA: ''
-          }
-        };
-      } else if (response.data.status === 'success') {
-        // Transform the data using our mapping utility
-        const transformedSections = mapBackendDataToSections(response.data);
-        
-        return {
-          status: 'success',
-          sections: transformedSections,
-          caseInfo: {
-            caseNumber: response.data.case_data?.case_number || '',
-            accountNumber: response.data.case_data?.account_info?.account_number || '',
-            dateGenerated: response.data.dateGenerated || new Date().toISOString()
-          }
-        };
+      // Add optional properties if they exist
+      if (response.data.caseNumber || response.data.case_data?.case_number) {
+        result.caseNumber = response.data.caseNumber || response.data.case_data?.case_number;
       }
       
-      return response.data;
-    } catch (error) {
-      console.error('Error getting sections:', error);
-      throw error;
+      if (response.data.accountNumber || response.data.case_data?.account_info?.account_number) {
+        result.accountNumber = response.data.accountNumber || response.data.case_data?.account_info?.account_number;
+      }
+      
+      result.dateGenerated = response.data.dateGenerated || new Date().toISOString();
+      
+      return result;
     }
-  },
+    
+    return response.data;
+  } catch (error) {
+    console.error('Error getting sections:', error);
+    throw error;
+  }
+},
   
   // Update a specific section
   updateSection: async (

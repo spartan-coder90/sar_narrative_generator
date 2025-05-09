@@ -161,6 +161,10 @@ export interface SectionResponse {
   referrals?: Referrals;
   case_data?: CaseData;
   excel_data?: ExcelData;
+  // Add these properties to fix the TypeScript errors
+  caseNumber?: string;
+  accountNumber?: string;
+  dateGenerated?: string;
 }
 
 export interface ErrorResponse {

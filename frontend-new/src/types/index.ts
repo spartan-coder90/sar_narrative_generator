@@ -127,15 +127,16 @@ export interface NarrativeSections {
   [key: string]: NarrativeSection;
 }
 
-// Recommendation Types
+// Recommendation Types - Update to a more flexible type
 export interface Recommendation {
-  alerting_activity: string;
-  prior_sars: string;
-  scope_of_review: string;
-  investigation_summary: string;
-  conclusion: string;
-  cta: string;
-  retain_close: string;
+  alerting_activity?: string;
+  prior_sars?: string;
+  scope_of_review?: string;
+  investigation_summary?: string;
+  conclusion?: string;
+  cta?: string;
+  retain_close?: string;
+  [key: string]: string | undefined;  // Allow string indexing
 }
 
 export interface CaseInfo {
@@ -153,14 +154,14 @@ export interface GenerateResponse {
   dateGenerated: string;
   warnings: string[];
   sections: NarrativeSections;
-  recommendation: Recommendation;
+  recommendation: Recommendation | Record<string, string>;
   excelFilename: string;
 }
 
 export interface SectionResponse {
   status: string;
   sections?: NarrativeSections;
-  recommendation?: Recommendation;
+  recommendation?: Recommendation | Record<string, string>;
   caseInfo?: CaseInfo;
   case_data?: CaseData;
   excel_data?: ExcelData;

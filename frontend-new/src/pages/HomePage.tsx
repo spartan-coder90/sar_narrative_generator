@@ -225,12 +225,6 @@ const HomePage: React.FC = () => {
                         Select the language model to use for generating narrative sections.
                       </Form.Text>
                     </Form.Group>
-
-                    // Then modify the API call to include the selected model
-                    const formData = new FormData();
-                    formData.append('caseFile', caseFile);
-                    formData.append('excelFile', excelFile);
-                    formData.append('model', selectedModel);
                     <div className="d-grid">
                       <Button 
                         variant="primary" 

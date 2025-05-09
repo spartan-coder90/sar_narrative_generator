@@ -4,14 +4,14 @@ import { Button, Alert, Spinner, Card, Row, Col, Container, Badge } from 'react-
 import { Save, Eye, ArrowLeft, CheckCircle, ArrowClockwise } from 'react-bootstrap-icons';
 import ApiService from '../services/api';
 import SectionEditor from '../components/SectionEditor';
-import { NarrativeSections } from '../types';
+import { NarrativeSections, Recommendation } from '../types';
 
 const EditPage: React.FC = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
   
   const [sections, setSections] = useState<NarrativeSections>({});
-  const [recommendation, setRecommendation] = useState<any>({});
+  const [recommendation, setRecommendation] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState<string>('introduction');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -37,7 +37,7 @@ const EditPage: React.FC = () => {
           
           // Set recommendation sections
           if (response.recommendation) {
-            setRecommendation(response.recommendation);
+            setRecommendation(response.recommendation as Record<string, string>);
           }
           
           // Extract case information
@@ -67,7 +67,7 @@ const EditPage: React.FC = () => {
             setActiveTab(firstRecSectionId);
             setActiveSection({
               id: firstRecSectionId,
-              content: response.recommendation[firstRecSectionId],
+              content: (response.recommendation as Record<string, string>)[firstRecSectionId],
               title: getRecommendationSectionTitle(firstRecSectionId),
               isRecommendation: true
             });
@@ -269,6 +269,37 @@ const EditPage: React.FC = () => {
     
     return narrativeComplete && recommendationComplete;
   };
+
+  // This function provides help text for each section
+  const getHelpText = (sectionId: string, isRecommendation: boolean): string => {
+    if (isRecommendation) {
+      // Help text for recommendation sections
+      const recommendationHelpText: Record<string, string> = {
+        "alerting_activity": "Summarize what triggered the alert and why the case was selected for review.",
+        "prior_sars": "List any prior SARs filed on this subject or account.",
+        "scope_of_review": "Specify the date range that was reviewed for this case.",
+        "investigation_summary": "Describe the investigation findings, red flags, and supporting evidence.",
+        "conclusion": "Provide the final recommendation with specific activity details.",
+        "cta": "Detail any Customer Transaction Assessment details and questions.",
+        "retain_close": "Indicate whether customer relationships should be retained or closed."
+      };
+      
+      return recommendationHelpText[sectionId] || "";
+    } else {
+      // Help text for narrative sections
+      const narrativeHelpText: Record<string, string> = {
+        "introduction": "Introduce the SAR filing with activity type, amount, subject name, account details, and date range.",
+        "prior_cases": "Include information about any prior SARs filed on this account or subject.",
+        "account_info": "Provide details about the account including type, open date, and status.",
+        "subject_info": "Include information about the subject including occupation and relationship to the account.",
+        "activity_summary": "Summarize the suspicious activity including transaction patterns and AML risks.",
+        "transaction_samples": "Provide specific examples of suspicious transactions with dates and amounts.",
+        "conclusion": "Summarize the SAR filing with total amounts, date ranges, and reference number."
+      };
+      
+      return narrativeHelpText[sectionId] || "";
+    }
+  };
   
   if (isLoading) {
     return (
@@ -462,3 +493,5 @@ const EditPage: React.FC = () => {
     </Container>
   );
 };
+
+export default EditPage;

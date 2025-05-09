@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button, Alert, Spinner, Card, Row, Col, Container, Badge } from 'react-bootstrap';
-import { Save, Eye, ArrowLeft, CheckCircle } from 'react-bootstrap-icons';
+import { Save, Eye, ArrowLeft, CheckCircle, ArrowClockwise } from 'react-bootstrap-icons';
 import ApiService from '../services/api';
 import SectionEditor from '../components/SectionEditor';
 import { NarrativeSections } from '../types';
@@ -11,121 +11,170 @@ const EditPage: React.FC = () => {
   const navigate = useNavigate();
   
   const [sections, setSections] = useState<NarrativeSections>({});
-  const [activeTab, setActiveTab] = useState<string>('alerting_activity');
+  const [recommendation, setRecommendation] = useState<any>({});
+  const [activeTab, setActiveTab] = useState<string>('introduction');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [isRegenerating, setIsRegenerating] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [caseInfo, setCaseInfo] = useState<any>({});
+  const [activeSection, setActiveSection] = useState<{id: string, content: string, title: string, isRecommendation: boolean} | null>(null);
   
-// In EditPage.tsx - update the useEffect hook
-useEffect(() => {
-  const fetchSections = async () => {
-    if (!sessionId) return;
+  useEffect(() => {
+    const fetchSections = async () => {
+      if (!sessionId) return;
+      
+      try {
+        setIsLoading(true);
+        const response = await ApiService.getSections(sessionId);
+        
+        if (response.status === 'success') {
+          // Set narrative sections
+          if (response.sections) {
+            setSections(response.sections);
+          }
+          
+          // Set recommendation sections
+          if (response.recommendation) {
+            setRecommendation(response.recommendation);
+          }
+          
+          // Extract case information
+          if (response.caseInfo) {
+            setCaseInfo(response.caseInfo);
+          } else if (response.case_data) {
+            const extractedInfo = {
+              caseNumber: response.case_data.case_number || '',
+              accountNumber: response.case_data.account_info?.account_number || '',
+              dateGenerated: new Date().toISOString()
+            };
+            setCaseInfo(extractedInfo);
+          }
+          
+          // Set first section as active by default
+          if (response.sections && Object.keys(response.sections).length > 0) {
+            const firstSectionId = Object.keys(response.sections)[0];
+            setActiveTab(firstSectionId);
+            setActiveSection({
+              id: firstSectionId,
+              content: response.sections[firstSectionId].content,
+              title: response.sections[firstSectionId].title,
+              isRecommendation: false
+            });
+          } else if (response.recommendation && Object.keys(response.recommendation).length > 0) {
+            const firstRecSectionId = Object.keys(response.recommendation)[0];
+            setActiveTab(firstRecSectionId);
+            setActiveSection({
+              id: firstRecSectionId,
+              content: response.recommendation[firstRecSectionId],
+              title: getRecommendationSectionTitle(firstRecSectionId),
+              isRecommendation: true
+            });
+          }
+        } else {
+          setError('Failed to load narrative sections');
+        }
+      } catch (err) {
+        console.error('Error fetching sections:', err);
+        setError('An error occurred while loading the narrative sections');
+      } finally {
+        setIsLoading(false);
+      }
+    };
     
-    try {
-      setIsLoading(true);
-      const response = await ApiService.getSections(sessionId);
-      
-      // Add console logging to see the response structure
-      console.log("API Response:", response);
-      
-      if (response.status === 'success') {
-        // Create template sections
-        const templateSections: NarrativeSections = {
-          // Your existing template sections code...
-          // (Keep this part unchanged)
-        };
-        
-        setSections(templateSections);
-        
-        // Extract case information from various possible sources
-        const extractedCaseInfo = {
-          caseNumber: 'N/A',
-          accountNumber: 'N/A',
-          dateGenerated: new Date().toISOString()
-        };
-        
-        // Try from caseInfo object first
-        if (response.caseInfo) {
-          if (response.caseInfo.caseNumber) {
-            extractedCaseInfo.caseNumber = response.caseInfo.caseNumber;
-          }
-          if (response.caseInfo.accountNumber) {
-            extractedCaseInfo.accountNumber = response.caseInfo.accountNumber;
-          }
-          if (response.caseInfo.dateGenerated) {
-            extractedCaseInfo.dateGenerated = response.caseInfo.dateGenerated;
-          }
-        }
-        
-        // Try from case_data - this is likely where your data is
-        if (response.case_data) {
-          if (response.case_data.case_number) {
-            extractedCaseInfo.caseNumber = response.case_data.case_number;
-          }
-          if (response.case_data.account_info?.account_number) {
-            extractedCaseInfo.accountNumber = response.case_data.account_info.account_number;
-          }
-        }
-        
-        // Add a type check before accessing direct properties
-        if ('caseNumber' in response && response.caseNumber) {
-          extractedCaseInfo.caseNumber = response.caseNumber;
-        }
-        if ('accountNumber' in response && response.accountNumber) {
-          extractedCaseInfo.accountNumber = response.accountNumber;
-        }
-        
-        console.log("Setting case info:", extractedCaseInfo);
-        setCaseInfo(extractedCaseInfo);
-      } else {
-        setError('Failed to load narrative sections');
-      }
-    } catch (err) {
-      console.error('Error fetching sections:', err);
-      setError('An error occurred while loading the narrative sections');
-    } finally {
-      setIsLoading(false);
+    fetchSections();
+  }, [sessionId]);
+  
+  const handleTabChange = (tabId: string) => {
+    setActiveTab(tabId);
+    
+    // Determine if this is a narrative section or recommendation section
+    if (sections[tabId]) {
+      // Narrative section
+      setActiveSection({
+        id: tabId,
+        content: sections[tabId].content,
+        title: sections[tabId].title,
+        isRecommendation: false
+      });
+    } else if (recommendation[tabId]) {
+      // Recommendation section
+      setActiveSection({
+        id: tabId,
+        content: recommendation[tabId],
+        title: getRecommendationSectionTitle(tabId),
+        isRecommendation: true
+      });
     }
   };
   
-  fetchSections();
-}, [sessionId]);
-  
-  const handleTabChange = (key: string | null) => {
-    if (key) {
-      setActiveTab(key);
-    }
+  const getRecommendationSectionTitle = (sectionId: string): string => {
+    const sectionTitles: {[key: string]: string} = {
+      "alerting_activity": "Alerting Activity / Reason for Review",
+      "prior_sars": "Prior SARs",
+      "scope_of_review": "Scope of Review",
+      "investigation_summary": "Summary of the Investigation",
+      "conclusion": "Recommendation Conclusion",
+      "cta": "CTA",
+      "retain_close": "Retain or Close Customer Relationship(s)"
+    };
+    
+    return sectionTitles[sectionId] || `Section: ${sectionId}`;
   };
   
-  const handleContentChange = (sectionId: string, content: string) => {
-    setSections(prevSections => ({
-      ...prevSections,
-      [sectionId]: {
-        ...prevSections[sectionId],
-        content
-      }
-    }));
+  const handleContentChange = (content: string) => {
+    if (!activeSection) return;
+    
+    if (activeSection.isRecommendation) {
+      // Update recommendation section
+      setRecommendation(prev => ({
+        ...prev,
+        [activeSection.id]: content
+      }));
+    } else {
+      // Update narrative section
+      setSections(prev => ({
+        ...prev,
+        [activeSection.id]: {
+          ...prev[activeSection.id],
+          content
+        }
+      }));
+    }
+    
+    // Update active section
+    setActiveSection(prev => prev ? { ...prev, content } : null);
   };
   
   const handleSaveSection = async () => {
-    if (!sessionId || !activeTab) return;
+    if (!sessionId || !activeSection) return;
     
     try {
       setIsSaving(true);
       setError(null);
       
-      const currentSection = sections[activeTab];
-      if (!currentSection) {
-        throw new Error('Section not found');
-      }
+      const sectionId = activeSection.id;
+      const content = activeSection.content;
+      const isRecommendation = activeSection.isRecommendation;
       
-      const response = await ApiService.updateSection(
-        sessionId,
-        activeTab,
-        currentSection.content
-      );
+      // Determine the API endpoint and data format based on section type
+      let response;
+      if (isRecommendation) {
+        // Save recommendation section
+        response = await ApiService.updateRecommendationSection(
+          sessionId,
+          sectionId,
+          content
+        );
+      } else {
+        // Save narrative section
+        response = await ApiService.updateSection(
+          sessionId,
+          sectionId,
+          content
+        );
+      }
       
       if (response.status === 'success') {
         setSuccessMessage('Section saved successfully');
@@ -145,6 +194,62 @@ useEffect(() => {
     }
   };
   
+  const handleRegenerateSection = async () => {
+    if (!sessionId || !activeSection) return;
+    
+    try {
+      setIsRegenerating(true);
+      setError(null);
+      
+      const sectionId = activeSection.id;
+      
+      const response = await ApiService.regenerateSection(
+        sessionId,
+        sectionId
+      );
+      
+      if (response.status === 'success' && response.section) {
+        // Update the section with regenerated content
+        const newContent = response.section.content;
+        const isRecommendation = response.section.type === 'recommendation';
+        
+        if (isRecommendation) {
+          // Update recommendation section
+          setRecommendation(prev => ({
+            ...prev,
+            [sectionId]: newContent
+          }));
+        } else {
+          // Update narrative section
+          setSections(prev => ({
+            ...prev,
+            [sectionId]: {
+              ...prev[sectionId],
+              content: newContent
+            }
+          }));
+        }
+        
+        // Update active section
+        setActiveSection(prev => prev ? { ...prev, content: newContent } : null);
+        
+        setSuccessMessage('Section regenerated successfully');
+        
+        // Auto-hide success message after 3 seconds
+        setTimeout(() => {
+          setSuccessMessage(null);
+        }, 3000);
+      } else {
+        setError('Failed to regenerate section');
+      }
+    } catch (err) {
+      console.error('Error regenerating section:', err);
+      setError('An error occurred while regenerating the section');
+    } finally {
+      setIsRegenerating(false);
+    }
+  };
+  
   const handlePreview = () => {
     if (sessionId) {
       navigate(`/preview/${sessionId}`);
@@ -153,8 +258,16 @@ useEffect(() => {
 
   const checkCompleteness = () => {
     // Check if all sections have content
-    const incomplete = Object.entries(sections).filter(([id, section]) => !section.content.trim());
-    return incomplete.length === 0;
+    const narrativeComplete = Object.values(sections).every(
+      section => section.content.trim() !== ''
+    );
+    
+    // Check if all recommendation sections have content
+    const recommendationComplete = Object.keys(recommendation).every(
+      key => recommendation[key] && recommendation[key].trim() !== ''
+    );
+    
+    return narrativeComplete && recommendationComplete;
   };
   
   if (isLoading) {
@@ -217,15 +330,17 @@ useEffect(() => {
               <div className="list-group list-group-flush">
                 <div className="list-group-item bg-light fw-bold">7. Recommendations</div>
                 <div className="list-group-item bg-light ps-4">B. SAR/No SAR Recommendation</div>
-                {["alerting_activity", "prior_sars", "scope_of_review", "investigation_summary", "recommendation_conclusion"].map(sectionId => (
+                {["alerting_activity", "prior_sars", "scope_of_review", "investigation_summary", "conclusion"].map(sectionId => (
                   <Button
                     key={sectionId}
                     variant="link"
                     className={`list-group-item list-group-item-action d-flex justify-content-between align-items-center ps-5 ${activeTab === sectionId ? 'active' : ''}`}
                     onClick={() => handleTabChange(sectionId)}
                   >
-                    {sections[sectionId]?.title}
-                    {!sections[sectionId]?.content.trim() && <Badge bg="warning" pill>Empty</Badge>}
+                    {getRecommendationSectionTitle(sectionId)}
+                    {!recommendation[sectionId] || recommendation[sectionId].trim() === '' ? 
+                      <Badge bg="warning" pill>Empty</Badge> : null
+                    }
                   </Button>
                 ))}
                 
@@ -237,7 +352,9 @@ useEffect(() => {
                   onClick={() => handleTabChange("cta")}
                 >
                   CTA
-                  {!sections["cta"]?.content.trim() && <Badge bg="warning" pill>Empty</Badge>}
+                  {!recommendation["cta"] || recommendation["cta"].trim() === '' ? 
+                    <Badge bg="warning" pill>Empty</Badge> : null
+                  }
                 </Button>
                 
                 <div className="list-group-item bg-light ps-4">D. Retain or Close Customer Relationship(s)</div>
@@ -248,19 +365,21 @@ useEffect(() => {
                   onClick={() => handleTabChange("retain_close")}
                 >
                   Retain or Close
-                  {!sections["retain_close"]?.content.trim() && <Badge bg="warning" pill>Empty</Badge>}
+                  {!recommendation["retain_close"] || recommendation["retain_close"].trim() === '' ? 
+                    <Badge bg="warning" pill>Empty</Badge> : null
+                  }
                 </Button>
                 
                 <div className="list-group-item bg-light fw-bold">SAR Narrative</div>
-                {["introduction", "subject_account_info", "suspicious_activity", "transaction_samples", "sar_conclusion"].map(sectionId => (
+                {Object.entries(sections).map(([sectionId, section]) => (
                   <Button
                     key={sectionId}
                     variant="link"
                     className={`list-group-item list-group-item-action d-flex justify-content-between align-items-center ps-4 ${activeTab === sectionId ? 'active' : ''}`}
                     onClick={() => handleTabChange(sectionId)}
                   >
-                    {sections[sectionId]?.title}
-                    {!sections[sectionId]?.content.trim() && <Badge bg="warning" pill>Empty</Badge>}
+                    {section.title}
+                    {!section.content.trim() ? <Badge bg="warning" pill>Empty</Badge> : null}
                   </Button>
                 ))}
               </div>
@@ -273,6 +392,15 @@ useEffect(() => {
             <Card.Header className="bg-primary text-white d-flex justify-content-between align-items-center">
               <h4 className="mb-0">Edit SAR Documentation</h4>
               <div>
+                <Button 
+                  variant="light" 
+                  onClick={handleRegenerateSection}
+                  className="me-2"
+                  disabled={isRegenerating || !activeSection}
+                >
+                  <ArrowClockwise className="me-1" /> 
+                  {isRegenerating ? 'Regenerating...' : 'Regenerate'}
+                </Button>
                 <Button 
                   variant="light" 
                   onClick={handlePreview}
@@ -295,21 +423,24 @@ useEffect(() => {
                 </Alert>
               )}
               
-              <div className="mb-4">
-                <h5>{sections[activeTab]?.title || 'Section'}</h5>
-                <p className="text-muted">
-                  {getHelpText(activeTab)}
-                </p>
-              </div>
+              {activeSection && (
+                <div className="mb-4">
+                  <h5>{activeSection.title}</h5>
+                  <p className="text-muted">
+                    {getHelpText(activeSection.id, activeSection.isRecommendation)}
+                  </p>
+                </div>
+              )}
               
-              {Object.entries(sections).map(([sectionId, section]) => (
-                <div 
-                  key={sectionId}
-                  className={sectionId === activeTab ? '' : 'd-none'}
-                >
+              {activeSection && (
+                <div>
                   <SectionEditor 
-                    section={section}
-                    onChange={(content) => handleContentChange(sectionId, content)}
+                    section={{
+                      id: activeSection.id,
+                      title: activeSection.title,
+                      content: activeSection.content
+                    }}
+                    onChange={handleContentChange}
                   />
                   
                   <div className="d-flex justify-content-end mt-3">
@@ -323,7 +454,7 @@ useEffect(() => {
                     </Button>
                   </div>
                 </div>
-              ))}
+              )}
             </Card.Body>
           </Card>
         </Col>
@@ -331,32 +462,3 @@ useEffect(() => {
     </Container>
   );
 };
-
-// Helper function to provide context-sensitive help text for each section
-function getHelpText(sectionId: string): string {
-  const helpTexts: Record<string, string> = {
-    // B. SAR/No SAR Recommendation
-    'alerting_activity': 'Enter alerting activity information including case number, account types, and alerting reason.',
-    'prior_sars': 'Enter any prior SAR information related to this case.',
-    'scope_of_review': 'Enter the review period for this case.',
-    'investigation_summary': 'Document red flags, supporting evidence, and investigation details. Investigator input required.',
-    'recommendation_conclusion': 'Summary of SAR recommendation including unusual activity types, accounts, subjects, amount, and date range.',
-    
-    // C. Escalations/Referrals
-    'cta': 'Enter Customer Transaction Assessment information including customer details, business nature, transaction sources, and relationships.',
-    
-    // D. Retain or Close Customer Relationship(s)
-    'retain_close': 'Indicate whether to retain or close customer relationships. For closure, include F-coded customers, high-risk typology, and closure justification.',
-    
-    // SAR Narrative
-    'introduction': 'The introduction should provide a summary of the suspicious activity being reported, including the type of activity, total amount, customer name, account information, and date range.',
-    'subject_account_info': 'Provide details about the subject and their account(s), including relationships and identifying information.',
-    'suspicious_activity': 'Describe the suspicious activity patterns, transaction details, and AML risk indicators.',
-    'transaction_samples': 'Include representative examples of suspicious transactions to illustrate the patterns being reported.',
-    'sar_conclusion': 'Summarize the report including total amount, activity type, customer information, account details, and date range. Include standard information for document requests with AML case number.'
-  };
-  
-  return helpTexts[sectionId] || 'Edit this section of the SAR documentation.';
-}
-
-export default EditPage;

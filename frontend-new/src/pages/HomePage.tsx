@@ -16,7 +16,9 @@ const HomePage: React.FC = () => {
   const [warnings, setWarnings] = useState<string[]>([]);
   const [availableCases, setAvailableCases] = useState<CaseSummary[]>([]);
   const [activeTab, setActiveTab] = useState<string>('static-case');
-  
+  const [selectedModel, setSelectedModel] = useState<string>('llama3-8b');
+
+
   // Fetch available cases on component mount
   useEffect(() => {
     const fetchCases = async () => {
@@ -209,6 +211,26 @@ const HomePage: React.FC = () => {
                       </Form.Text>
                     </Form.Group>
                     
+                    <Form.Group className="mb-3">
+                      <Form.Label>LLM Model</Form.Label>
+                      <Form.Select
+                        value={selectedModel}
+                        onChange={(e) => setSelectedModel(e.target.value)}
+                      >
+                        <option value="llama3-8b">Llama 3:8B</option>
+                        <option value="gpt-3.5-turbo">GPT 3.5 Turbo</option>
+                        <option value="gpt-4">GPT 4</option>
+                      </Form.Select>
+                      <Form.Text className="text-muted">
+                        Select the language model to use for generating narrative sections.
+                      </Form.Text>
+                    </Form.Group>
+
+                    // Then modify the API call to include the selected model
+                    const formData = new FormData();
+                    formData.append('caseFile', caseFile);
+                    formData.append('excelFile', excelFile);
+                    formData.append('model', selectedModel);
                     <div className="d-grid">
                       <Button 
                         variant="primary" 
@@ -228,7 +250,7 @@ const HomePage: React.FC = () => {
                             Processing...
                           </>
                         ) : (
-                          'Generate SAR Narrative'
+                          'Generate Narrative'
                         )}
                       </Button>
                     </div>

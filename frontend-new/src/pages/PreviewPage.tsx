@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Button, Alert, Spinner, Card, Row, Col, Container, ListGroup, Badge } from 'react-bootstrap';
+import { Button, Alert, Spinner, Card, Row, Col, Container, ListGroup, Badge, Tabs, Tab } from 'react-bootstrap';
 import { Download, PencilSquare, Printer, ArrowLeft, FileText } from 'react-bootstrap-icons';
 import ApiService from '../services/api';
-import { NarrativeSections } from '../types';
+import { NarrativeSections, Recommendation } from '../types';
 
 const PreviewPage: React.FC = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
   
   const [sections, setSections] = useState<NarrativeSections>({});
+  const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
+  const [activeTab, setActiveTab] = useState<string>('narrative');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [caseInfo, setCaseInfo] = useState<any>({});
@@ -22,12 +24,25 @@ const PreviewPage: React.FC = () => {
         setIsLoading(true);
         const response = await ApiService.getSections(sessionId);
         
-        if (response.status === 'success' && response.sections) {
-          setSections(response.sections);
+        if (response.status === 'success') {
+          if (response.sections) {
+            setSections(response.sections);
+          }
+          
+          if (response.recommendation) {
+            setRecommendation(response.recommendation);
+          }
           
           // Extract case info if available
           if (response.caseInfo) {
             setCaseInfo(response.caseInfo);
+          } else if (response.case_data) {
+            const extractedInfo = {
+              caseNumber: response.case_data.case_number || '',
+              accountNumber: response.case_data.account_info?.account_number || '',
+              dateGenerated: new Date().toISOString()
+            };
+            setCaseInfo(extractedInfo);
           }
         } else {
           setError('Failed to load narrative sections');
@@ -43,7 +58,7 @@ const PreviewPage: React.FC = () => {
     fetchSections();
   }, [sessionId]);
   
-  const handleExport = () => {
+  const handleExportNarrative = () => {
     if (!sessionId) return;
     
     // Create a temporary anchor and trigger a download
@@ -51,6 +66,19 @@ const PreviewPage: React.FC = () => {
     link.href = ApiService.getExportUrl(sessionId);
     link.target = '_blank';
     link.download = `SAR_Narrative_${caseInfo.caseNumber || sessionId}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+  
+  const handleExportRecommendation = () => {
+    if (!sessionId) return;
+    
+    // Create a temporary anchor and trigger a download
+    const link = document.createElement('a');
+    link.href = ApiService.getRecommendationExportUrl(sessionId);
+    link.target = '_blank';
+    link.download = `SAR_Recommendation_${caseInfo.caseNumber || sessionId}.txt`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -75,6 +103,39 @@ const PreviewPage: React.FC = () => {
       .map(id => sections[id]?.content || '')
       .filter(content => content)
       .join('\n\n');
+  };
+  
+  const buildFullRecommendation = () => {
+    if (!recommendation) return '';
+    
+    const orderedSectionIds = [
+      'alerting_activity',
+      'prior_sars',
+      'scope_of_review',
+      'investigation_summary',
+      'conclusion',
+      'cta',
+      'retain_close'
+    ];
+    
+    return orderedSectionIds
+      .map(id => recommendation[id as keyof Recommendation] || '')
+      .filter(content => content)
+      .join('\n\n');
+  };
+  
+  const getRecommendationSectionTitle = (sectionId: string): string => {
+    const sectionTitles: {[key: string]: string} = {
+      "alerting_activity": "Alerting Activity / Reason for Review",
+      "prior_sars": "Prior SARs",
+      "scope_of_review": "Scope of Review",
+      "investigation_summary": "Summary of the Investigation",
+      "conclusion": "Recommendation Conclusion",
+      "cta": "CTA",
+      "retain_close": "Retain or Close Customer Relationship(s)"
+    };
+    
+    return sectionTitles[sectionId] || `Section: ${sectionId}`;
   };
   
   if (isLoading) {
@@ -115,10 +176,18 @@ const PreviewPage: React.FC = () => {
                 </Button>
                 <Button 
                   variant="primary" 
-                  onClick={handleExport}
+                  onClick={handleExportNarrative}
                 >
-                  <Download className="me-1" /> Export Document
+                  <Download className="me-1" /> Export Narrative
                 </Button>
+                {recommendation && (
+                  <Button 
+                    variant="info" 
+                    onClick={handleExportRecommendation}
+                  >
+                    <Download className="me-1" /> Export Recommendation
+                  </Button>
+                )}
                 <Button 
                   variant="outline-primary" 
                   onClick={handlePrint}
@@ -133,29 +202,56 @@ const PreviewPage: React.FC = () => {
             <Card.Header className="bg-secondary text-white">
               <h5 className="mb-0">Sections</h5>
             </Card.Header>
-            <ListGroup variant="flush">
-              {Object.entries(sections).map(([id, section]) => (
-                <ListGroup.Item key={id} className="d-flex justify-content-between align-items-center">
-                  {section.title}
-                  {section.content ? (
-                    <Badge bg="success" pill>Complete</Badge>
-                  ) : (
-                    <Badge bg="danger" pill>Missing</Badge>
-                  )}
-                </ListGroup.Item>
-              ))}
-            </ListGroup>
+            <Tabs
+              activeKey={activeTab}
+              onSelect={(k) => k && setActiveTab(k)}
+              className="mb-3"
+              fill
+            >
+              <Tab eventKey="narrative" title="SAR Narrative">
+                <ListGroup variant="flush">
+                  {Object.entries(sections).map(([id, section]) => (
+                    <ListGroup.Item key={id} className="d-flex justify-content-between align-items-center">
+                      {section.title}
+                      {section.content ? (
+                        <Badge bg="success" pill>Complete</Badge>
+                      ) : (
+                        <Badge bg="danger" pill>Missing</Badge>
+                      )}
+                    </ListGroup.Item>
+                  ))}
+                </ListGroup>
+              </Tab>
+              <Tab eventKey="recommendation" title="Recommendation">
+                {recommendation && (
+                  <ListGroup variant="flush">
+                    {Object.keys(recommendation).map((key) => (
+                      <ListGroup.Item key={key} className="d-flex justify-content-between align-items-center">
+                        {getRecommendationSectionTitle(key)}
+                        {recommendation[key as keyof Recommendation] ? (
+                          <Badge bg="success" pill>Complete</Badge>
+                        ) : (
+                          <Badge bg="danger" pill>Missing</Badge>
+                        )}
+                      </ListGroup.Item>
+                    ))}
+                  </ListGroup>
+                )}
+              </Tab>
+            </Tabs>
           </Card>
         </Col>
         
         <Col md={9}>
           <Card className="shadow-sm">
             <Card.Header className="bg-primary text-white d-flex justify-content-between align-items-center">
-              <h4 className="mb-0">Section 7: SAR Narrative</h4>
+              <h4 className="mb-0">
+                {activeTab === 'narrative' ? 'Section 7: SAR Narrative' : 'SAR Recommendation'}
+              </h4>
               <div>
                 <Button 
                   variant="light" 
-                  onClick={handleExport}
+                  onClick={activeTab === 'narrative' ? handleExportNarrative : handleExportRecommendation}
                   className="me-2"
                 >
                   <Download className="me-1" /> Export
@@ -175,13 +271,31 @@ const PreviewPage: React.FC = () => {
                 </Alert>
               )}
               
-              <div className="narrative-preview">
-                {buildFullNarrative().split('\n\n').map((paragraph, index) => (
-                  <div key={index} className="mb-4">
-                    <p>{paragraph}</p>
+              <Tabs
+                activeKey={activeTab}
+                onSelect={(k) => k && setActiveTab(k)}
+                className="mb-4"
+                fill
+              >
+                <Tab eventKey="narrative" title="SAR Narrative">
+                  <div className="narrative-preview">
+                    {buildFullNarrative().split('\n\n').map((paragraph, index) => (
+                      <div key={index} className="mb-4">
+                        <p>{paragraph}</p>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </Tab>
+                <Tab eventKey="recommendation" title="Recommendation">
+                  <div className="recommendation-preview">
+                    {buildFullRecommendation().split('\n\n').map((paragraph, index) => (
+                      <div key={index} className="mb-4">
+                        <p>{paragraph}</p>
+                      </div>
+                    ))}
+                  </div>
+                </Tab>
+              </Tabs>
             </Card.Body>
           </Card>
           
@@ -198,13 +312,13 @@ const PreviewPage: React.FC = () => {
                 className="me-2"
                 onClick={() => navigate(`/edit/${sessionId}`)}
               >
-                <PencilSquare className="me-1" /> Edit Narrative
+                <PencilSquare className="me-1" /> Edit
               </Button>
               <Button 
                 variant="success" 
-                onClick={handleExport}
+                onClick={activeTab === 'narrative' ? handleExportNarrative : handleExportRecommendation}
               >
-                <FileText className="me-1" /> Export Narrative
+                <FileText className="me-1" /> Export
               </Button>
             </div>
           </div>

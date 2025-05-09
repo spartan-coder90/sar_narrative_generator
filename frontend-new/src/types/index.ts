@@ -1,4 +1,3 @@
-// src/types/index.ts
 export interface CaseSummary {
   case_number: string;
   subjects: string[];
@@ -98,6 +97,13 @@ export interface UnusualActivity {
     description: string;
     account?: string;
   }>;
+  summary?: {
+    total_amount: number;
+    date_range: {
+      start: string;
+      end: string;
+    };
+  };
 }
 
 export interface ExcelData {
@@ -126,13 +132,10 @@ export interface Recommendation {
   alerting_activity: string;
   prior_sars: string;
   scope_of_review: string;
-  summary_of_investigation: string;
+  investigation_summary: string;
   conclusion: string;
+  cta: string;
   retain_close: string;
-}
-
-export interface Referrals {
-  CTA: string;
 }
 
 export interface CaseInfo {
@@ -150,15 +153,15 @@ export interface GenerateResponse {
   dateGenerated: string;
   warnings: string[];
   sections: NarrativeSections;
+  recommendation: Recommendation;
   excelFilename: string;
 }
 
 export interface SectionResponse {
   status: string;
   sections?: NarrativeSections;
-  caseInfo?: CaseInfo;
   recommendation?: Recommendation;
-  referrals?: Referrals;
+  caseInfo?: CaseInfo;
   case_data?: CaseData;
   excel_data?: ExcelData;
   // Add these properties to fix the TypeScript errors
@@ -184,5 +187,6 @@ export interface RegenerateSectionResponse {
   section: {
     id: string;
     content: string;
+    type?: string;
   };
 }

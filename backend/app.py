@@ -6,6 +6,7 @@ import json
 import tempfile
 from datetime import datetime
 import logging
+from backend.integrations.llm_client import LLMClient
 from werkzeug.utils import secure_filename
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
@@ -129,19 +130,25 @@ def generate_narrative():
         # Fill missing data and get combined result
         combined_data = validator.fill_missing_data()
         
-        # Generate narrative
+        # Generate narrative and recommendations
         try:
-            narrative_generator = NarrativeGenerator(combined_data)
-            narrative = narrative_generator.generate_narrative()
+            # Initialize LLM client
+            llm_client = LLMClient()
+            
+            # Generate narrative and recommendation sections
+            narrative_generator = NarrativeGenerator(combined_data, llm_client)
+            generated_data = narrative_generator.generate_all()
+            
+            narrative = generated_data["narrative"]
+            sections = generated_data["sections"]
+            recommendation = generated_data["recommendation"]
+            
         except Exception as e:
             logger.error(f"Error generating narrative: {str(e)}", exc_info=True)
             return jsonify({
                 "status": "error",
                 "message": f"Error in narrative generation: {str(e)}"
             }), 500
-        
-        # Split narrative into sections
-        sections = split_narrative_into_sections(narrative)
         
         # Create response with session ID for future reference
         response = {
@@ -152,6 +159,7 @@ def generate_narrative():
             "dateGenerated": datetime.now().isoformat(),
             "warnings": warnings,
             "sections": sections,
+            "recommendation": recommendation,
             "caseFilename": os.path.basename(case_path),
             "excelFilename": os.path.basename(excel_path),
             # Add Word Control Macro data if available
@@ -170,6 +178,167 @@ def generate_narrative():
             "combined_data": combined_data,
             "narrative": narrative,
             "sections": sections,
+            "recommendation": recommendation,
+            "wordControl": excel_data.get("word_control_macro", {})
+        }, os.path.join(upload_folder, 'data.json'))
+        
+        return jsonify(response), 200
+    
+    except Exception as e:
+        logger.error(f"Error generating narrative: {str(e)}", exc_info=True)
+        # Clean up upload folder on error
+        try:
+            import shutil
+            shutil.rmtree(upload_folder)
+        except Exception as cleanup_error:
+            logger.error(f"Error cleaning up temporary files: {str(cleanup_error)}")
+            
+        return jsonify({
+            "status": "error",
+            "message": f"Error generating narrative: {str(e)}"
+        }), 500
+
+
+@app.route('/api/generate-from-case', methods=['POST'])
+def generate_from_case():
+    """
+    Process selected case and uploaded Excel file to generate SAR narrative
+    
+    Requires:
+    - case_number: Case number to use from static repository
+    - excelFile: Transaction Excel file
+    
+    Returns:
+    - narrative: Generated SAR narrative
+    - warnings: Any warnings during processing
+    - errors: Any errors during processing
+    """
+    # Check if case_number was provided
+    case_number = request.form.get('case_number')
+    if not case_number:
+        return jsonify({
+            "status": "error",
+            "message": "Case number is required"
+        }), 400
+    
+    # Check if Excel file was uploaded
+    if 'excelFile' not in request.files:
+        return jsonify({
+            "status": "error",
+            "message": "Excel file is required"
+        }), 400
+    
+    excel_file = request.files['excelFile']
+    
+    # Check if file is empty
+    if excel_file.filename == '':
+        return jsonify({
+            "status": "error",
+            "message": "Empty Excel file name"
+        }), 400
+    
+    # Retrieve static case data
+    try:
+        from backend.data.case_repository import get_case, get_full_case
+        case_data = get_case(case_number)
+        full_case_data = get_full_case(case_number)
+        
+        if not case_data:
+            return jsonify({
+                "status": "error",
+                "message": f"Case number {case_number} not found"
+            }), 404
+            
+        # Add full case data to the case_data response if available
+        if full_case_data:
+            case_data["full_data"] = full_case_data
+            
+    except Exception as e:
+        logger.error(f"Error retrieving case data: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": f"Error retrieving case data: {str(e)}"
+        }), 500
+    
+    # Create a unique session folder for this request
+    session_id = str(uuid.uuid4())
+    upload_folder = os.path.join(app.config['UPLOAD_FOLDER'], session_id)
+    os.makedirs(upload_folder, exist_ok=True)
+    
+    # Save uploaded Excel file
+    excel_filename = secure_filename(excel_file.filename)
+    excel_path = os.path.join(upload_folder, excel_filename)
+    excel_file.save(excel_path)
+    
+    try:
+        # Process Excel file
+        logger.info(f"Processing Excel file: {os.path.basename(excel_path)}")
+        excel_processor = ExcelProcessor(excel_path)
+        excel_data = excel_processor.process()
+        
+        # Validate data
+        validator = DataValidator(case_data, excel_data)
+        is_valid, errors, warnings = validator.validate()
+        
+        if not is_valid and errors:
+            return jsonify({
+                "status": "error",
+                "message": "Validation failed",
+                "errors": errors,
+                "warnings": warnings
+            }), 400
+        
+        # Fill missing data and get combined result
+        combined_data = validator.fill_missing_data()
+        
+        # Generate narrative and recommendations
+        try:
+            # Initialize LLM client
+            llm_client = LLMClient()
+            
+            # Generate narrative and recommendation sections
+            narrative_generator = NarrativeGenerator(combined_data, llm_client)
+            generated_data = narrative_generator.generate_all()
+            
+            narrative = generated_data["narrative"]
+            sections = generated_data["sections"]
+            recommendation = generated_data["recommendation"]
+            
+        except Exception as e:
+            logger.error(f"Error generating narrative: {str(e)}", exc_info=True)
+            return jsonify({
+                "status": "error",
+                "message": f"Error in narrative generation: {str(e)}"
+            }), 500
+        
+        # Create response with session ID for future reference
+        response = {
+            "status": "success",
+            "sessionId": session_id,
+            "caseNumber": case_data.get("case_number", ""),
+            "accountNumber": case_data.get("account_info", {}).get("account_number", ""),
+            "dateGenerated": datetime.now().isoformat(),
+            "warnings": warnings,
+            "sections": sections,
+            "recommendation": recommendation,
+            "excelFilename": os.path.basename(excel_path),
+            "wordControl": excel_data.get("word_control_macro", {}),
+            "fullCaseData": case_data.get("full_data", None)
+        }
+        
+        # Include full data for context
+        response["case_data"] = case_data
+        response["excel_data"] = excel_data
+        response["combined_data"] = combined_data
+        
+        # Save a copy of the processed data for later use
+        save_to_json_file({
+            "case_data": case_data,
+            "excel_data": excel_data,
+            "combined_data": combined_data,
+            "narrative": narrative,
+            "sections": sections,
+            "recommendation": recommendation,
             "wordControl": excel_data.get("word_control_macro", {})
         }, os.path.join(upload_folder, 'data.json'))
         
@@ -213,83 +382,27 @@ def get_sections(session_id):
     try:
         data = load_from_json_file(data_path)
         
-        return jsonify({
+        # Create response with all necessary data for frontend
+        response = {
             "status": "success",
-            "sections": data["sections"]
-        }), 200
+            "sections": data["sections"],
+            "recommendation": data.get("recommendation", {}),
+            "case_data": data["case_data"],
+            "excel_data": data["excel_data"],
+            "caseInfo": {
+                "caseNumber": data["case_data"].get("case_number", ""),
+                "accountNumber": data["case_data"].get("account_info", {}).get("account_number", ""),
+                "dateGenerated": data.get("dateGenerated", datetime.now().isoformat())
+            }
+        }
+        
+        return jsonify(response), 200
     
     except Exception as e:
         logger.error(f"Error fetching sections: {str(e)}")
         return jsonify({
             "status": "error",
             "message": f"Error fetching sections: {str(e)}"
-        }), 500
-
-
-@app.route('/api/sections/<session_id>/<section_id>', methods=['PUT'])
-def update_section(session_id, section_id):
-    """
-    Update a specific section
-    """
-    # Validate session ID to prevent directory traversal
-    if not re.match(r'^[0-9a-f\-]+$', session_id):
-        return jsonify({
-            "status": "error",
-            "message": "Invalid session ID format"
-        }), 400
-    
-    # Validate section ID
-    if section_id not in VALID_SECTION_IDS:
-        return jsonify({
-            "status": "error",
-            "message": "Invalid section ID"
-        }), 400
-    
-    data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
-    
-    if not os.path.exists(data_path):
-        return jsonify({
-            "status": "error",
-            "message": "Session not found"
-        }), 404
-    
-    content = request.json.get('content')
-    if not content:
-        return jsonify({
-            "status": "error",
-            "message": "Content is required"
-        }), 400
-    
-    try:
-        data = load_from_json_file(data_path)
-        
-        # Update section content
-        if section_id in data["sections"]:
-            data["sections"][section_id]["content"] = content
-            
-            # Rebuild full narrative
-            narrative = rebuild_narrative(data["sections"])
-            data["narrative"] = narrative
-            
-            # Save updated data
-            with open(data_path, 'w') as f:
-                json.dump(data, f, default=str)  # Added default=str to handle datetime serialization
-            
-            return jsonify({
-                "status": "success",
-                "message": "Section updated successfully"
-            }), 200
-        else:
-            return jsonify({
-                "status": "error",
-                "message": "Section not found"
-            }), 404
-    
-    except Exception as e:
-        logger.error(f"Error updating section: {str(e)}")
-        return jsonify({
-            "status": "error",
-            "message": f"Error updating section: {str(e)}"
         }), 500
 
 
@@ -305,8 +418,18 @@ def regenerate_section(session_id, section_id):
             "message": "Invalid session ID format"
         }), 400
     
+    # Expand valid section IDs to include recommendation sections
+    VALID_SECTION_IDS_EXTENDED = [
+        # SAR Narrative sections
+        "introduction", "prior_cases", "account_info", "subject_info",
+        "activity_summary", "transaction_samples", "conclusion",
+        # Recommendation sections
+        "alerting_activity", "prior_sars", "scope_of_review", 
+        "investigation_summary", "recommendation_conclusion", "cta", "retain_close"
+    ]
+    
     # Validate section ID
-    if section_id not in VALID_SECTION_IDS:
+    if section_id not in VALID_SECTION_IDS_EXTENDED:
         return jsonify({
             "status": "error",
             "message": "Invalid section ID"
@@ -322,46 +445,89 @@ def regenerate_section(session_id, section_id):
     
     try:
         data = load_from_json_file(data_path)
-
         
         # Regenerate the specified section
         combined_data = data["combined_data"]
-        narrative_generator = NarrativeGenerator(combined_data)
         
-        # Generate section based on ID
+        # Initialize LLM client
+        llm_client = LLMClient()
+        
+        # Create narrative generator
+        narrative_generator = NarrativeGenerator(combined_data, llm_client)
+        
+        # Determine if it's a narrative section or recommendation section
+        recommendation_sections = ["alerting_activity", "prior_sars", "scope_of_review", 
+                                  "investigation_summary", "recommendation_conclusion", "cta", "retain_close"]
+        
         section_content = ""
-        if section_id == "introduction":
-            section_content = narrative_generator.generate_introduction()
-        elif section_id == "prior_cases":
-            section_content = narrative_generator.generate_prior_cases()
-        elif section_id == "account_info":
-            section_content = narrative_generator.generate_account_info()
-        elif section_id == "activity_summary":
-            section_content = narrative_generator.generate_activity_summary()
-        elif section_id == "conclusion":
-            section_content = narrative_generator.generate_conclusion()
-        elif section_id == "subject_info":
-            section_content = narrative_generator.generate_subject_info()
-        elif section_id == "transaction_samples":
-            section_content = narrative_generator.generate_transaction_samples()
         
-        # Update section in data
-        data["sections"][section_id]["content"] = section_content
-        
-        # Rebuild full narrative
-        narrative = rebuild_narrative(data["sections"])
-        data["narrative"] = narrative
+        if section_id in recommendation_sections:
+            # Generate recommendation section
+            if section_id == "alerting_activity":
+                section_content = narrative_generator.generate_alerting_activity()
+            elif section_id == "prior_sars":
+                section_content = narrative_generator.generate_prior_sars_summary()
+            elif section_id == "scope_of_review":
+                section_content = narrative_generator.generate_scope_of_review()
+            elif section_id == "investigation_summary":
+                section_content = narrative_generator.generate_investigation_summary()
+            elif section_id == "recommendation_conclusion":
+                section_content = narrative_generator.generate_recommendation_conclusion()
+            elif section_id == "cta":
+                section_content = narrative_generator.generate_cta_section()
+            elif section_id == "retain_close":
+                section_content = narrative_generator.generate_retain_close()
+            
+            # Update recommendation section in data
+            if "recommendation" not in data:
+                data["recommendation"] = {}
+            
+            data["recommendation"][section_id] = section_content
+            
+            # Return the content in the expected format
+            section_details = {
+                "id": section_id,
+                "content": section_content,
+                "type": "recommendation"
+            }
+        else:
+            # Generate narrative section
+            if section_id == "introduction":
+                section_content = narrative_generator.generate_introduction()
+            elif section_id == "prior_cases":
+                section_content = narrative_generator.generate_prior_cases()
+            elif section_id == "account_info":
+                section_content = narrative_generator.generate_account_info()
+            elif section_id == "subject_info":
+                section_content = narrative_generator.generate_subject_info()
+            elif section_id == "activity_summary":
+                section_content = narrative_generator.generate_activity_summary()
+            elif section_id == "transaction_samples":
+                section_content = narrative_generator.generate_transaction_samples()
+            elif section_id == "conclusion":
+                section_content = narrative_generator.generate_conclusion()
+            
+            # Update section in data
+            data["sections"][section_id]["content"] = section_content
+            
+            # Rebuild full narrative
+            narrative = rebuild_narrative(data["sections"])
+            data["narrative"] = narrative
+            
+            # Return the content in the expected format
+            section_details = {
+                "id": section_id,
+                "content": section_content,
+                "type": "narrative"
+            }
         
         # Save updated data
         with open(data_path, 'w') as f:
-            json.dump(data, f, default=str)  # Added default=str to handle datetime serialization
+            json.dump(data, f, default=str)
         
         return jsonify({
             "status": "success",
-            "section": {
-                "id": section_id,
-                "content": section_content
-            }
+            "section": section_details
         }), 200
     
     except Exception as e:
@@ -564,6 +730,14 @@ def generate_from_case():
             "message": "Empty Excel file name"
         }), 400
     
+        # Get selected model (default to llama3-8b if not specified)
+    selected_model = request.form.get('model', 'llama3-8b')
+    
+    # Validate model selection
+    valid_models = ['llama3-8b', 'gpt-3.5-turbo', 'gpt-4']
+    if selected_model not in valid_models:
+        selected_model = 'llama3-8b'  # Default to Llama 3 if invalid
+        
     # Retrieve static case data
     try:
         from backend.data.case_repository import get_case, get_full_case
@@ -617,10 +791,11 @@ def generate_from_case():
         
         # Fill missing data and get combined result
         combined_data = validator.fill_missing_data()
-        
+        # Initialize LLM client with selected model
+        llm_client = LLMClient(model=selected_model)
         # Generate narrative
         try:
-            narrative_generator = NarrativeGenerator(combined_data)
+            narrative_generator = NarrativeGenerator(combined_data, llm_client=llm_client)
             narrative = narrative_generator.generate_narrative()
         except Exception as e:
             logger.error(f"Error generating narrative: {str(e)}", exc_info=True)
@@ -675,6 +850,176 @@ def generate_from_case():
         return jsonify({
             "status": "error",
             "message": f"Error generating narrative: {str(e)}"
+        }), 500
+
+@app.route('/api/recommendations/<session_id>/<section_id>', methods=['PUT'])
+def update_recommendation_section(session_id, section_id):
+    """
+    Update a specific recommendation section
+    """
+    # Validate session ID to prevent directory traversal
+    if not re.match(r'^[0-9a-f\-]+$', session_id):
+        return jsonify({
+            "status": "error",
+            "message": "Invalid session ID format"
+        }), 400
+    
+    # Define valid recommendation section IDs
+    valid_recommendation_sections = [
+        "alerting_activity", "prior_sars", "scope_of_review", 
+        "investigation_summary", "conclusion", "cta", "retain_close"
+    ]
+    
+    # Validate section ID
+    if section_id not in valid_recommendation_sections:
+        return jsonify({
+            "status": "error",
+            "message": "Invalid recommendation section ID"
+        }), 400
+    
+    data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
+    
+    if not os.path.exists(data_path):
+        return jsonify({
+            "status": "error",
+            "message": "Session not found"
+        }), 404
+    
+    content = request.json.get('content')
+    if not content:
+        return jsonify({
+            "status": "error",
+            "message": "Content is required"
+        }), 400
+    
+    try:
+        data = load_from_json_file(data_path)
+        
+        # Ensure recommendation object exists
+        if "recommendation" not in data:
+            data["recommendation"] = {}
+        
+        # Update recommendation section content
+        data["recommendation"][section_id] = content
+        
+        # Save updated data
+        with open(data_path, 'w') as f:
+            json.dump(data, f, default=str)
+        
+        return jsonify({
+            "status": "success",
+            "message": "Recommendation section updated successfully"
+        }), 200
+    
+    except Exception as e:
+        logger.error(f"Error updating recommendation section: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": f"Error updating recommendation section: {str(e)}"
+        }), 500
+
+
+@app.route('/api/export-recommendation/<session_id>', methods=['GET'])
+def export_recommendation(session_id):
+    """
+    Export the SAR recommendation
+    """
+    # Validate session ID to prevent directory traversal
+    if not re.match(r'^[0-9a-f\-]+$', session_id):
+        return jsonify({
+            "status": "error",
+            "message": "Invalid session ID format"
+        }), 400
+    
+    data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
+    
+    if not os.path.exists(data_path):
+        return jsonify({
+            "status": "error",
+            "message": "Session not found"
+        }), 404
+    
+    try:
+        data = load_from_json_file(data_path)
+        case_data = data["case_data"]
+        
+        # Check if recommendation exists
+        if "recommendation" not in data:
+            return jsonify({
+                "status": "error",
+                "message": "Recommendation not found"
+            }), 404
+        
+        recommendation = data["recommendation"]
+        
+        # Build recommendation text
+        ordered_sections = [
+            "alerting_activity",
+            "prior_sars",
+            "scope_of_review",
+            "investigation_summary",
+            "conclusion",
+            "cta",
+            "retain_close"
+        ]
+        
+        recommendation_text = "7. Recommendations\n\nB. SAR/No SAR Recommendation\n\n"
+        
+        for section_id in ordered_sections:
+            if section_id in recommendation and recommendation[section_id]:
+                # Add section header based on section ID
+                if section_id == "alerting_activity":
+                    recommendation_text += "Alerting Activity / Reason for Review\n"
+                elif section_id == "prior_sars":
+                    recommendation_text += "Prior SARs\n"
+                elif section_id == "scope_of_review":
+                    recommendation_text += "Scope of Review\n"
+                elif section_id == "investigation_summary":
+                    recommendation_text += "Summary of the Investigation (Red Flags, Supporting Evidence, etc.)\n"
+                elif section_id == "conclusion":
+                    recommendation_text += "Conclusion\n"
+                elif section_id == "cta":
+                    recommendation_text += "\nC. Escalations/Referrals\n\nCTA\n"
+                elif section_id == "retain_close":
+                    recommendation_text += "\nD. Retain or Close Customer Relationship(s)\n"
+                
+                recommendation_text += recommendation[section_id] + "\n\n"
+        
+        # Create a temporary file for export
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as tmp:
+            case_number = case_data.get("case_number", "unknown")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Write header
+            tmp.write(f"SAR Recommendation - Case {case_number}\n".encode('utf-8'))
+            tmp.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n".encode('utf-8'))
+            
+            # Write recommendation
+            tmp.write(recommendation_text.encode('utf-8'))
+            
+            # Add footer
+            tmp.write("\n\n===================================================================\n".encode('utf-8'))
+            tmp.write("Generated by SAR Narrative Generator".encode('utf-8'))
+            
+            tmp_path = tmp.name
+        
+        # Generate filename for download
+        filename = f"SAR_Recommendation_{case_number}_{timestamp}.txt"
+        
+        # Send file for download
+        return send_file(
+            tmp_path,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='text/plain'
+        )
+    
+    except Exception as e:
+        logger.error(f"Error exporting recommendation: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": f"Error exporting recommendation: {str(e)}"
         }), 500
 
 if __name__ == '__main__':

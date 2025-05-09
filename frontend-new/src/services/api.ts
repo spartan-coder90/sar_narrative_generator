@@ -7,7 +7,6 @@ import {
   CaseSummary,
   SectionResponse
 } from '../types';
-import { mapBackendDataToSections } from '../utils/sar-narrative-mapper';
 
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8081/api';
 
@@ -58,46 +57,43 @@ export const ApiService = {
   },
   
   // Get narrative sections for a session
-// Most effective implementation for getSections in api.ts
-// In src/services/api.ts
-getSections: async (sessionId: string): Promise<SectionResponse> => {
-  try {
-    const response = await api.get(`/sections/${sessionId}`);
-    
-    if (response.data.status === 'success') {
-      // Create a properly typed result object
-      const result: SectionResponse = {
-        status: 'success',
-        sections: response.data.sections,
-        case_data: response.data.case_data,
-        excel_data: response.data.excel_data,
-        caseInfo: response.data.caseInfo,
-        recommendation: response.data.recommendation,
-        referrals: response.data.referrals
-      };
+  getSections: async (sessionId: string): Promise<SectionResponse> => {
+    try {
+      const response = await api.get(`/sections/${sessionId}`);
       
-      // Add optional properties if they exist
-      if (response.data.caseNumber || response.data.case_data?.case_number) {
-        result.caseNumber = response.data.caseNumber || response.data.case_data?.case_number;
+      if (response.data.status === 'success') {
+        // Create a properly typed result object
+        const result: SectionResponse = {
+          status: 'success',
+          sections: response.data.sections,
+          recommendation: response.data.recommendation || {},
+          case_data: response.data.case_data,
+          excel_data: response.data.excel_data,
+          caseInfo: response.data.caseInfo,
+        };
+        
+        // Add optional properties if they exist
+        if (response.data.caseNumber || response.data.case_data?.case_number) {
+          result.caseNumber = response.data.caseNumber || response.data.case_data?.case_number;
+        }
+        
+        if (response.data.accountNumber || response.data.case_data?.account_info?.account_number) {
+          result.accountNumber = response.data.accountNumber || response.data.case_data?.account_info?.account_number;
+        }
+        
+        result.dateGenerated = response.data.dateGenerated || new Date().toISOString();
+        
+        return result;
       }
       
-      if (response.data.accountNumber || response.data.case_data?.account_info?.account_number) {
-        result.accountNumber = response.data.accountNumber || response.data.case_data?.account_info?.account_number;
-      }
-      
-      result.dateGenerated = response.data.dateGenerated || new Date().toISOString();
-      
-      return result;
+      return response.data;
+    } catch (error) {
+      console.error('Error getting sections:', error);
+      throw error;
     }
-    
-    return response.data;
-  } catch (error) {
-    console.error('Error getting sections:', error);
-    throw error;
-  }
-},
+  },
   
-  // Update a specific section
+  // Update a specific section of the SAR narrative
   updateSection: async (
     sessionId: string, 
     sectionId: string, 
@@ -111,7 +107,21 @@ getSections: async (sessionId: string): Promise<SectionResponse> => {
     return response.data;
   },
   
-  // Regenerate a specific section
+  // Update a recommendation section
+  updateRecommendationSection: async (
+    sessionId: string, 
+    sectionId: string, 
+    content: string
+  ): Promise<UpdateSectionResponse> => {
+    const response = await api.put<UpdateSectionResponse>(
+      `/recommendations/${sessionId}/${sectionId}`, 
+      { content }
+    );
+    
+    return response.data;
+  },
+  
+  // Regenerate a specific section (narrative or recommendation)
   regenerateSection: async (
     sessionId: string, 
     sectionId: string
@@ -126,6 +136,11 @@ getSections: async (sessionId: string): Promise<SectionResponse> => {
   // Get export URL
   getExportUrl: (sessionId: string): string => {
     return `${API_BASE_URL}/export/${sessionId}`;
+  },
+
+  // Get recommendation export URL
+  getRecommendationExportUrl: (sessionId: string): string => {
+    return `${API_BASE_URL}/export-recommendation/${sessionId}`;
   }
 };
 

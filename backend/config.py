@@ -19,25 +19,27 @@ API_HOST = os.getenv("API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("API_PORT", "8081"))
 API_DEBUG = os.getenv("API_DEBUG", "False").lower() == "true"
 
-# LLM settings
-LLM_API_URL = os.getenv("LLM_API_URL", "http://localhost:3000/api/chat")
-LLM_API_KEY = os.getenv("LLM_API_KEY", "")
-LLM_MODEL = os.getenv("LLM_MODEL", "lama3:8b")
-LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
-LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))  # Low temperature for more predictable outputs
-
 # LLM model configuration
 DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "llama3-8b")
 
-# Llama 3 configuration
-LLAMA_API_ENDPOINT = os.getenv("LLAMA_API_ENDPOINT", "http://localhost:11434/api/chat")
+# Llama 3 configuration (Ollama)
+LLAMA_API_ENDPOINT = os.getenv("LLAMA_API_ENDPOINT", "http://localhost:11434")
 LLAMA_API_KEY = os.getenv("LLAMA_API_KEY", "")
 
 # Azure OpenAI configuration
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "")
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY", "")
 
+# OpenWebUI configuration
+OPENWEBUI_API_ENDPOINT = os.getenv("OPENWEBUI_API_ENDPOINT", "http://localhost:8080/api/v1")
+OPENWEBUI_API_KEY = os.getenv("OPENWEBUI_API_KEY", "")
 
+# Legacy LLM settings (for backwards compatibility)
+LLM_API_URL = os.getenv("LLM_API_URL", "http://localhost:3000/api/chat")
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+LLM_MODEL = os.getenv("LLM_MODEL", "lama3:8b")
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))  # Low temperature for more predictable outputs
 
 # SAR Narrative template sections
 TEMPLATES = {

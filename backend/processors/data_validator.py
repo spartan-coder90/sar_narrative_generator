@@ -5,7 +5,6 @@ from typing import Dict, List, Any, Optional, Tuple
 import re
 from datetime import datetime
 from backend.utils.sar_extraction_utils import extract_case_number, extract_subjects
-
 from backend.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -37,8 +36,19 @@ class DataValidator:
         case_number = self.case_data.get("case_number", "")
         
         if not case_number:
-            self.missing_required.append("Case number is missing")
-            return False
+            # Try to extract from full data if available
+            full_data = self.case_data.get("full_data", [])
+            if full_data:
+                for section in full_data:
+                    if section.get("section") == "Case Information":
+                        case_number = section.get("Case Number", "")
+                        if case_number:
+                            self.case_data["case_number"] = case_number
+                            break
+            
+            if not case_number:
+                self.missing_required.append("Case number is missing")
+                return False
         
         # Relax format validation - allow any non-empty case number
         return True
@@ -56,12 +66,38 @@ class DataValidator:
         if not alert_info:
             alert_info = []
             self.case_data["alert_info"] = alert_info
-            self.warnings.append("No alert information provided")
             
         # Convert dict to list if needed
         if isinstance(alert_info, dict):
             alert_info = [alert_info]
             self.case_data["alert_info"] = alert_info
+        
+        # Try to extract from full_data if empty
+        if not alert_info and self.case_data.get("full_data", []):
+            for section in self.case_data["full_data"]:
+                if section.get("section") == "Alerting Details":
+                    alerts = section.get("alerts", [])
+                    if alerts:
+                        alert_info = []
+                        for alert in alerts:
+                            alert_obj = {
+                                "alert_id": alert.get("Alert ID", ""),
+                                "alert_month": alert.get("Alert Month", ""),
+                                "description": alert.get("Description", ""),
+                                "review_period": {"start": "", "end": ""}
+                            }
+                            
+                            # Parse review period if available
+                            review_period = alert.get("Review Period", "")
+                            if review_period and " - " in review_period:
+                                dates = review_period.split(" - ")
+                                if len(dates) == 2:
+                                    alert_obj["review_period"]["start"] = dates[0]
+                                    alert_obj["review_period"]["end"] = dates[1]
+                            
+                            alert_info.append(alert_obj)
+                        self.case_data["alert_info"] = alert_info
+                        break
         
         # If still no alerts, add a placeholder
         if not alert_info:
@@ -87,6 +123,62 @@ class DataValidator:
         """
         subjects = self.case_data.get("subjects", [])
         
+        # Try to extract from full_data if empty
+        if not subjects and self.case_data.get("full_data", []):
+            for section in self.case_data["full_data"]:
+                if section.get("section") == "Customer Information":
+                    if "US Bank Customer Information" in section:
+                        subjects = []
+                        for customer in section["US Bank Customer Information"]:
+                            subject = {
+                                "name": customer.get("Primary Party", ""),
+                                "is_primary": True,  # First customer is primary
+                                "party_key": customer.get("Party Key", ""),
+                                "occupation": customer.get("Occupation Description", ""),
+                                "employer": customer.get("Employer", ""),
+                                "nationality": customer.get("Country of Nationality", ""),
+                                "address": "",
+                                "account_relationship": ""
+                            }
+                            
+                            # Extract first address if available
+                            if "Addresses" in customer and customer["Addresses"]:
+                                addresses = customer["Addresses"]
+                                if isinstance(addresses, list) and addresses:
+                                    subject["address"] = addresses[0]
+                            
+                            subjects.append(subject)
+                            if len(subjects) == 1:  # Only first is primary
+                                break
+                        
+                        self.case_data["subjects"] = subjects
+                    elif "customerInformation" in section and "US Bank Customers" in section["customerInformation"]:
+                        subjects = []
+                        for customer in section["customerInformation"]["US Bank Customers"]:
+                            subject = {
+                                "name": customer.get("Name", ""),
+                                "is_primary": True,  # First customer is primary
+                                "party_key": customer.get("Party Key", ""),
+                                "occupation": customer.get("Occupation Description", ""),
+                                "employer": customer.get("Employer", ""),
+                                "nationality": customer.get("Nationality", ""),
+                                "address": "",
+                                "account_relationship": ""
+                            }
+                            
+                            # Extract first address if available
+                            if "Addresses" in customer and customer["Addresses"]:
+                                addresses = customer["Addresses"]
+                                if isinstance(addresses, list) and addresses:
+                                    subject["address"] = addresses[0]
+                            
+                            subjects.append(subject)
+                            if len(subjects) == 1:  # Only first is primary
+                                break
+                        
+                        self.case_data["subjects"] = subjects
+                    break
+        
         if not subjects:
             # Create default subject if missing
             self.warnings.append("Subject information is missing - adding default subject")
@@ -105,6 +197,9 @@ class DataValidator:
             self.warnings.append("No primary subject identified - setting first subject as primary")
             subjects[0]["is_primary"] = True
         
+        # Update case data
+        self.case_data["subjects"] = subjects
+        
         return True
     
     def validate_account_info(self) -> bool:
@@ -116,10 +211,65 @@ class DataValidator:
         """
         account_info = self.case_data.get("account_info", {})
         
-        # If account_info is empty, create a default structure
+        # Try to extract from full_data if empty or minimal
+        if (not account_info or not account_info.get("account_number")) and self.case_data.get("full_data", []):
+            for section in self.case_data["full_data"]:
+                if section.get("section") == "Account Information":
+                    if "Accounts" in section and section["Accounts"]:
+                        account = section["Accounts"][0]  # Take first account
+                        account_info = {
+                            "account_number": account.get("Account Key", ""),
+                            "account_type": ", ".join(account.get("Account Type", [])) if isinstance(account.get("Account Type"), list) else account.get("Account Type", ""),
+                            "account_title": account.get("Account Title", ""),
+                            "open_date": account.get("Account Opening Date & Branch", ""),
+                            "close_date": account.get("Account Closing Date", ""),
+                            "status": account.get("Status Description", ""),
+                            "related_parties": [],
+                            "branch": account.get("Account Holding Branch", "")
+                        }
+                        
+                        # Process related parties
+                        if "Related Parties" in account and isinstance(account["Related Parties"], list):
+                            for party in account["Related Parties"]:
+                                parts = party.split(" (")
+                                if len(parts) == 2:
+                                    name = parts[0].strip()
+                                    role = parts[1].strip().rstrip(")")
+                                    account_info["related_parties"].append({"name": name, "role": role})
+                                else:
+                                    account_info["related_parties"].append({"name": party, "role": ""})
+                        
+                        self.case_data["account_info"] = account_info
+                    elif "accountInformation" in section and "Account" in section["accountInformation"]:
+                        account = section["accountInformation"]["Account"]
+                        account_info = {
+                            "account_number": account.get("Account Key", ""),
+                            "account_type": ", ".join(account.get("Types", [])) if isinstance(account.get("Types"), list) else account.get("Types", ""),
+                            "account_title": account.get("Title", ""),
+                            "status": account.get("Status", {}).get("Description", "") if "Status" in account else "",
+                            "related_parties": [],
+                            "branch": ""
+                        }
+                        
+                        # Handle opening/closing dates
+                        if "Opening" in account:
+                            account_info["open_date"] = account["Opening"].get("Date", "")
+                            account_info["branch"] = account["Opening"].get("Branch", "")
+                        
+                        account_info["close_date"] = account.get("Closing Date", "")
+                        
+                        # Process related parties
+                        if "Related Parties" in account and isinstance(account["Related Parties"], list):
+                            for party in account["Related Parties"]:
+                                account_info["related_parties"].append({"name": party, "role": ""})
+                        
+                        self.case_data["account_info"] = account_info
+                    break
+        
+        # If account_info is still empty, create a default structure
         if not account_info:
             account_info = {
-                "account_number": "UNKNOWN",
+                "account_number": "",
                 "account_type": "Unknown Account",
                 "status": "Unknown Status"
             }
@@ -139,8 +289,11 @@ class DataValidator:
                 account_number = next(iter(account_summaries.keys()), "UNKNOWN")
                 account_info["account_number"] = account_number
             else:
-                account_info["account_number"] = "UNKNOWN"
+                account_info["account_number"] = ""
             self.warnings.append("Account number is missing")
+        
+        # Update case data
+        self.case_data["account_info"] = account_info
         
         return True
     
@@ -187,26 +340,57 @@ class DataValidator:
                 if total_credits > 0 or total_debits > 0:
                     activity_summary["total_amount"] = max(total_credits, total_debits)
         
-        # Check date ranges
+        # Check date ranges - get from multiple sources
+        review_period = self.case_data.get("review_period", {})
+        alert_info = self.case_data.get("alert_info", [])
+        first_alert = alert_info[0] if alert_info else {}
+        alert_review_period = first_alert.get("review_period", {}) if isinstance(first_alert, dict) else {}
+        
         if not activity_summary.get("start_date") or not activity_summary.get("end_date"):
-            # Try to derive from transaction_summary or review_period
-            transaction_summary = self.excel_data.get("transaction_summary", {})
-            review_period = self.case_data.get("review_period", {})
-            
             if not activity_summary.get("start_date"):
+                # Try to get from different sources
                 if review_period and review_period.get("start"):
                     activity_summary["start_date"] = review_period.get("start")
+                elif alert_review_period and alert_review_period.get("start"):
+                    activity_summary["start_date"] = alert_review_period.get("start")
                 else:
-                    activity_summary["start_date"] = "01/01/2023"  # Default fallback
+                    # Get from full_data
+                    full_data = self.case_data.get("full_data", [])
+                    for section in full_data:
+                        if section.get("section") == "Account Information":
+                            review_period_str = section.get("Case Review Period", "")
+                            if review_period_str and " - " in review_period_str:
+                                dates = review_period_str.split(" - ")
+                                if len(dates) == 2:
+                                    activity_summary["start_date"] = dates[0]
+                                    break
+                    
+                    if not activity_summary.get("start_date"):
+                        activity_summary["start_date"] = "01/01/2023"  # Default fallback
                 self.warnings.append("Activity start date is missing - using default or derived value")
             
             if not activity_summary.get("end_date"):
+                # Try to get from different sources
                 if review_period and review_period.get("end"):
                     activity_summary["end_date"] = review_period.get("end")
+                elif alert_review_period and alert_review_period.get("end"):
+                    activity_summary["end_date"] = alert_review_period.get("end")
                 else:
-                    # Use current date as default end date
-                    current_date = datetime.now().strftime("%m/%d/%Y")
-                    activity_summary["end_date"] = current_date
+                    # Get from full_data
+                    full_data = self.case_data.get("full_data", [])
+                    for section in full_data:
+                        if section.get("section") == "Account Information":
+                            review_period_str = section.get("Case Review Period", "")
+                            if review_period_str and " - " in review_period_str:
+                                dates = review_period_str.split(" - ")
+                                if len(dates) == 2:
+                                    activity_summary["end_date"] = dates[1]
+                                    break
+                    
+                    if not activity_summary.get("end_date"):
+                        # Use current date as default end date
+                        current_date = datetime.now().strftime("%m/%d/%Y")
+                        activity_summary["end_date"] = current_date
                 self.warnings.append("Activity end date is missing - using default or derived value")
         
         # Check transaction types
@@ -222,6 +406,9 @@ class DataValidator:
             if not activity_summary.get("transaction_types"):
                 activity_summary["transaction_types"] = ["Unknown Transaction Type"]
                 self.warnings.append("Transaction types are missing - using default")
+        
+        # Update excel data
+        self.excel_data["activity_summary"] = activity_summary
         
         return True
     
@@ -262,6 +449,9 @@ class DataValidator:
                                 "description": f"Sample {txn_type} transaction"
                             }
                             unusual_activity["transactions"].append(sample)
+        
+        # Update excel data
+        self.excel_data["unusual_activity"] = unusual_activity
         
         return True
     

@@ -1,71 +1,62 @@
 """
-Enhanced LLM Client with robust PII/PCI protection and fact preservation
+Enhanced LLM Client with Langchain, robust PII/PCI protection and fact preservation
 """
 import re
 import json
 import logging
 from typing import Dict, List, Any, Optional, Tuple
-import requests
 from hashlib import md5
+import uuid
 
 from backend.utils.logger import get_logger
 import backend.config as config
 
+# Langchain imports
+from langchain.chat_models import ChatOpenAI, AzureChatOpenAI
+from langchain.llms import Ollama
+from langchain.schema import HumanMessage, SystemMessage
+from langchain.callbacks.base import BaseCallbackHandler
+
 logger = get_logger(__name__)
 
-class LLMClient:
-    """Client for interacting with language models with enhanced PII/PCI protection and fact preservation"""
+class PIIProtector:
+    """Handles PII/PCI protection and restoration"""
     
     # Patterns for detecting PII/PCI data with more precise matching
     PII_PATTERNS = {
-        "account_number": r'(?<!\w)(\d{10,})(?!\w)|(?<!\w)([A-Z0-9]{16,})(?!\w)',  # Account numbers (digits or alphanumeric)
+        "account_number": r'(?<!\w)(\d{10,}|[A-Z0-9]{10,})(?!\w)',  # Account numbers (10+ digits or alphanumeric)
         "name": r'(?<!\w)([A-Z][A-Z\s]+(?:[A-Z]\.?\s)?[A-Z][A-Z]+)(?!\w)',  # Names in ALL CAPS
-        "address": r'(?<!\w)(\d+\s+[A-Z][A-Za-z\s,\.]+(?:ST|AVE|RD|LN|DR|BLVD|STREET|AVENUE|ROAD))(?!\w)',  # Addresses
+        "address": r'(?<!\w)(\d+\s+[A-Z][A-Za-z\s,\.]+(?:ST|AVE|RD|LN|DR|BLVD|STREET|AVENUE|ROAD|CIRCLE|COURT|PLACE|WAY).*?\d{5}(?:-\d{4})?)(?=\n|,|\.|\Z)',  # Full addresses
         "phone": r'(?<!\w)(\d{3}[-\.\s]?\d{3}[-\.\s]?\d{4})(?!\w)',  # Phone numbers
         "ssn": r'(?<!\w)(\d{3}[-\.\s]?\d{2}[-\.\s]?\d{4})(?!\w)',  # SSNs
         "email": r'(?<!\w)([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})(?!\w)',  # Email addresses
-        "case_number": r'(?<!\w)(C[0-9]{7,}|CC[0-9]{10,}|AML[0-9]{7,})(?!\w)'  # Case numbers
+        "case_number": r'(?<!\w)(C[0-9]{7,}|CC[0-9]{10,}|AML[0-9]{7,})(?!\w)',  # Case numbers
+        "tin": r'(?<!\w)(\d{2}-\d{7})(?!\w)',  # Tax identification numbers
+        "party_key": r'(?<!\w)(\d{18,})(?!\w)',  # Party keys (long number sequences)
+        "dob": r'(?<!\w)(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})(?!\w)',  # Date of birth
+        "drivers_license": r'(?<!\w)([A-Z]\d{8,}|\d{8,}[A-Z]?)(?!\w)',  # Driver's license numbers
+        "bank_routing": r'(?<!\w)(\d{9})(?!\w)',  # Bank routing numbers
     }
     
     # Patterns for critical data that must be preserved
     PRESERVE_PATTERNS = {
         "money_amount": r'\$[\d,]+\.\d{2}|\$[\d,]+|\d+\s+dollars|\d+\s+USD',  # Money amounts
         "percentage": r'\d+(?:\.\d+)?%',  # Percentages
-        "date": r'\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2}|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2},? \d{4}\b',  # Dates
         "transaction_count": r'(?<!\w)(\d+)\s+transactions?(?!\w)',  # Transaction counts
-        "alert_id": r'(?<!\w)(AMLR\d+|AMLC\d+|SAM\d+-\d+|IRF_\d+)(?!\w)'  # Alert IDs
+        "alert_id": r'(?<!\w)(AMLR\d+|AMLC\d+|SAM\d+-\d+|IRF_\d+)(?!\w)',  # Alert IDs
+        "date": r'\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2}|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2},? \d{4}\b',  # Dates
     }
     
-    def __init__(self, model: str = None, api_key: Optional[str] = None, endpoint: Optional[str] = None):
-        """
-        Initialize the LLM client with configurable model
-        
-        Args:
-            model: LLM model identifier ('llama3-8b', 'gpt-3.5-turbo', 'gpt-4')
-            api_key: API key for the model
-            endpoint: API endpoint for the model
-        """
-        self.model = model or config.DEFAULT_LLM_MODEL
-        self.api_key = api_key or self._get_api_key_for_model(self.model)
-        self.endpoint = endpoint or self._get_endpoint_for_model(self.model)
-        
-        logger.info(f"Initialized LLM client with model: {self.model}")
-        
-    def _get_api_key_for_model(self, model: str) -> str:
-        """Get appropriate API key based on selected model"""
-        if model.startswith('gpt'):
-            return config.AZURE_OPENAI_API_KEY
-        else:
-            return config.LLAMA_API_KEY
+    def __init__(self):
+        self.placeholder_map = {}
+        self.counter = 0
     
-    def _get_endpoint_for_model(self, model: str) -> str:
-        """Get appropriate endpoint based on selected model"""
-        if model.startswith('gpt'):
-            return config.AZURE_OPENAI_ENDPOINT
-        else:
-            return config.LLAMA_API_ENDPOINT
+    def _generate_placeholder(self, data_type: str) -> str:
+        """Generate a unique placeholder for PII/PCI data"""
+        self.counter += 1
+        return f"[{data_type}_{self.counter}]"
     
-    def _extract_and_protect_data(self, text: str) -> Tuple[str, Dict[str, str]]:
+    def protect_data(self, text: str) -> Tuple[str, Dict[str, str]]:
         """
         Extract and protect both PII/PCI and critical data
         
@@ -75,32 +66,40 @@ class LLMClient:
         Returns:
             Tuple: (processed_text, placeholder_map)
         """
-        placeholder_map = {}
         processed_text = text
+        placeholder_map = {}
         
         # First, identify and protect critical data to preserve
         for data_type, pattern in self.PRESERVE_PATTERNS.items():
-            matches = re.finditer(pattern, processed_text)
-            for match in matches:
+            matches = list(re.finditer(pattern, processed_text))
+            for match in reversed(matches):  # Process from end to avoid position shifts
                 original_value = match.group(0)
-                hash_key = md5(original_value.encode()).hexdigest()[:8]
-                placeholder = f"<<PRESERVE_{data_type.upper()}_{hash_key}>>"
+                placeholder = self._generate_placeholder(f"PRESERVE_{data_type.upper()}")
                 placeholder_map[placeholder] = original_value
-                processed_text = processed_text.replace(original_value, placeholder)
+                processed_text = processed_text[:match.start()] + placeholder + processed_text[match.end():]
         
         # Then, identify and protect PII data
         for data_type, pattern in self.PII_PATTERNS.items():
-            matches = re.finditer(pattern, processed_text)
-            for match in matches:
+            matches = list(re.finditer(pattern, processed_text))
+            for match in reversed(matches):  # Process from end to avoid position shifts
                 original_value = match.group(0)
-                hash_key = md5(original_value.encode()).hexdigest()[:8]
-                placeholder = f"<<PII_{data_type.upper()}_{hash_key}>>"
-                placeholder_map[placeholder] = original_value
-                processed_text = processed_text.replace(original_value, placeholder)
+                
+                # Skip if this is part of a preserved pattern
+                skip = False
+                for placeholder in placeholder_map.keys():
+                    if placeholder in processed_text[match.start():match.end()]:
+                        skip = True
+                        break
+                
+                if not skip:
+                    placeholder = self._generate_placeholder(f"PII_{data_type.upper()}")
+                    placeholder_map[placeholder] = original_value
+                    processed_text = processed_text[:match.start()] + placeholder + processed_text[match.end():]
         
+        self.placeholder_map = placeholder_map
         return processed_text, placeholder_map
     
-    def _restore_data(self, text: str, placeholder_map: Dict[str, str]) -> str:
+    def restore_data(self, text: str, placeholder_map: Dict[str, str]) -> str:
         """
         Restore all protected data from placeholders
         
@@ -113,161 +112,107 @@ class LLMClient:
         """
         restored_text = text
         
+        # Sort placeholders by length in descending order to avoid partial replacements
+        sorted_placeholders = sorted(placeholder_map.items(), key=lambda x: len(x[0]), reverse=True)
+        
         # Replace each placeholder with its original value
-        for placeholder, original in placeholder_map.items():
+        for placeholder, original in sorted_placeholders:
             restored_text = restored_text.replace(placeholder, original)
         
         return restored_text
+
+class LLMCallbackHandler(BaseCallbackHandler):
+    """Callback handler for langchain to log LLM calls"""
     
-    def _call_llama_api(self, prompt: str, max_tokens: int = 1000, temperature: float = 0.3) -> str:
+    def on_llm_start(self, serialized: Dict[str, Any], prompts: List[str], **kwargs) -> None:
+        logger.debug(f"LLM started with prompts: {len(prompts)}")
+    
+    def on_llm_end(self, response, **kwargs) -> None:
+        logger.debug("LLM call completed")
+    
+    def on_llm_error(self, error: Exception, **kwargs) -> None:
+        logger.error(f"LLM call failed: {str(error)}")
+
+class LLMClient:
+    """Client for interacting with language models with enhanced PII/PCI protection and fact preservation"""
+    
+    def __init__(self, model: str = None, api_key: Optional[str] = None, endpoint: Optional[str] = None):
         """
-        Call Llama via Ollama with the correct API format
+        Initialize the LLM client with configurable model
         
         Args:
-            prompt: The prompt to send to the model
-            max_tokens: Maximum tokens in the response
-            temperature: Temperature setting (lower is more deterministic)
-            
-        Returns:
-            str: Generated text
+            model: LLM model identifier ('llama3-8b', 'gpt-3.5-turbo', 'gpt-4', 'openwebui', etc.)
+            api_key: API key for the model
+            endpoint: API endpoint for the model
         """
-        # Check if endpoint is configured
-        if not self.endpoint:
-            logger.warning("Llama API endpoint not configured, returning empty result")
-            return ""
+        self.model = model or config.DEFAULT_LLM_MODEL
+        self.api_key = api_key or self._get_api_key_for_model(self.model)
+        self.endpoint = endpoint or self._get_endpoint_for_model(self.model)
+        self.pii_protector = PIIProtector()
+        self.callback_handler = LLMCallbackHandler()
         
-        # Check if we're using Ollama (typically on localhost)
-        using_ollama = 'localhost' in self.endpoint or '127.0.0.1' in self.endpoint
+        # Initialize the langchain client based on model type
+        self.llm_client = self._initialize_llm_client()
         
-        if using_ollama:
-            # Ollama API format is different
-            payload = {
-                "model": "llama3:8b",  # or "llama3:8b" depending on your Ollama model name
-                "messages": [
-                    {"role": "user", "content": prompt}
-                ],
-                "stream": False,
-                "options": {
-                    "temperature": temperature,
-                    "num_predict": max_tokens
-                }
-            }
-            
-            headers = {
-                "Content-Type": "application/json"
-            }
-            
-            try:
-                # Make request to Ollama
-                response = requests.post(
-                    self.endpoint,
-                    headers=headers,
-                    data=json.dumps(payload),
-                    timeout=60  # Longer timeout for local model
-                )
-                
-                response.raise_for_status()
-                result = response.json()
-                
-                # Extract text from Ollama response format
-                if "message" in result:
-                    return result["message"]["content"].strip()
-                return ""
-                
-            except Exception as e:
-                logger.error(f"Error calling Ollama API: {str(e)}")
-                return ""
+        logger.info(f"Initialized LLM client with model: {self.model}")
+    
+    def _get_api_key_for_model(self, model: str) -> str:
+        """Get appropriate API key based on selected model"""
+        if model.startswith('gpt'):
+            return config.AZURE_OPENAI_API_KEY
+        elif model in ['openwebui', 'openai-compatible']:
+            return config.OPENWEBUI_API_KEY
         else:
-            payload = {
-                "model": "llama3-8b",
-                "prompt": prompt,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "top_p": 0.95
-            }
-            
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"
-            }
-            
-            # Make API request
-            try:
-                response = requests.post(
-                    self.endpoint,
-                    headers=headers,
-                    data=json.dumps(payload),
-                    timeout=30
-                )
-                
-                response.raise_for_status()
-                result = response.json()
-                
-                return result.get("choices", [{}])[0].get("text", "").strip()
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Error calling Llama API: {str(e)}")
-                return ""
+            return config.LLAMA_API_KEY or ""
     
-    def _call_azure_openai_api(self, prompt: str, max_tokens: int = 1000, temperature: float = 0.3) -> str:
-        """
-        Call Azure OpenAI API (GPT 3.5 or GPT 4)
-        
-        Args:
-            prompt: The prompt to send to the model
-            max_tokens: Maximum tokens in the response
-            temperature: Temperature setting (lower is more deterministic)
-            
-        Returns:
-            str: Generated text
-        """
-        if not self.endpoint or not self.api_key:
-            logger.warning("Azure OpenAI API not configured, returning empty result")
-            return ""
-            
-        # Extract deployment name from model
-        deployment_name = "gpt-35-turbo"
-        if self.model == "gpt-4":
-            deployment_name = "gpt-4"
-        
-        # Prepare request payload for chat completion
-        payload = {
-            "messages": [
-                {"role": "system", "content": "You are an expert assistant for generating SAR narratives and recommendations. Keep all financial data, dates, amounts, transaction counts, and other factual details exactly as provided. Do not invent or alter any facts."},
-                {"role": "user", "content": prompt}
-            ],
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "top_p": 0.95
-        }
-        
-        headers = {
-            "api-key": self.api_key,
-            "Content-Type": "application/json"
-        }
-        
-        # Azure OpenAI endpoint structure
-        url = f"{self.endpoint}openai/deployments/{deployment_name}/chat/completions?api-version=2023-03-15-preview"
-        
-        # Make API request
+    def _get_endpoint_for_model(self, model: str) -> str:
+        """Get appropriate endpoint based on selected model"""
+        if model.startswith('gpt'):
+            return config.AZURE_OPENAI_ENDPOINT
+        elif model in ['openwebui', 'openai-compatible']:
+            return config.OPENWEBUI_API_ENDPOINT
+        else:
+            return config.LLAMA_API_ENDPOINT
+    
+    def _initialize_llm_client(self):
+        """Initialize the appropriate langchain client based on model"""
         try:
-            response = requests.post(
-                url,
-                headers=headers,
-                data=json.dumps(payload),
-                timeout=30
-            )
-            
-            response.raise_for_status()
-            result = response.json()
-            
-            # Extract text from chat completion
-            return result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error calling Azure OpenAI API: {str(e)}")
-            return ""
+            if self.model.startswith('gpt'):
+                # Azure OpenAI
+                return AzureChatOpenAI(
+                    azure_endpoint=self.endpoint,
+                    api_key=self.api_key,
+                    api_version="2023-05-15",
+                    deployment_name=self.model.replace('gpt-3.5-turbo', 'gpt-35-turbo'),
+                    temperature=0.2,
+                    max_tokens=1000,
+                    callbacks=[self.callback_handler]
+                )
+            elif self.model in ['openwebui', 'openai-compatible']:
+                # OpenWebUI or OpenAI-compatible API
+                from langchain.llms import OpenAI
+                return OpenAI(
+                    openai_api_base=self.endpoint,
+                    openai_api_key=self.api_key,
+                    model_name="gpt-3.5-turbo",  # Default model for OpenWebUI
+                    temperature=0.2,
+                    max_tokens=1000,
+                    callbacks=[self.callback_handler]
+                )
+            else:
+                # Ollama (local or remote)
+                return Ollama(
+                    base_url=self.endpoint,
+                    model="llama3:8b",
+                    temperature=0.2,
+                    num_predict=1000,
+                    callbacks=[self.callback_handler]
+                )
+        except Exception as e:
+            logger.error(f"Failed to initialize LLM client: {str(e)}")
+            raise
     
-    def generate_content(self, prompt: str, max_tokens: int = 1000, temperature: float = 0.3) -> str:
+    def generate_content(self, prompt: str, max_tokens: int = 1000, temperature: float = 0.2) -> str:
         """
         Generate content with PII/PCI protection and fact preservation
         
@@ -279,31 +224,57 @@ class LLMClient:
         Returns:
             str: Generated text with PII/PCI and critical data restored
         """
-        # Extract and protect PII/PCI and critical data
-        processed_prompt, placeholder_map = self._extract_and_protect_data(prompt)
-        
-        # Enhance prompt with instructions to preserve placeholders
-        enhanced_prompt = (
-            f"IMPORTANT: This prompt contains special placeholder codes like <<PRESERVE_DATE_12345678>> and <<PII_ACCOUNT_NUMBER_12345678>>. "
-            f"These placeholder codes MUST be preserved exactly as they appear in your response. "
-            f"Do not modify, replace, or remove any placeholder code. \n\n"
-            f"{processed_prompt}"
-        )
-        
-        # Select appropriate API based on model
-        if self.model.startswith('gpt'):
-            response = self._call_azure_openai_api(enhanced_prompt, max_tokens, temperature)
-        else:
-            response = self._call_llama_api(enhanced_prompt, max_tokens, temperature)
-        
-        # Restore PII/PCI and critical data in response
-        restored_response = self._restore_data(response, placeholder_map)
-        
-        return restored_response
+        try:
+            # Extract and protect PII/PCI and critical data
+            processed_prompt, placeholder_map = self.pii_protector.protect_data(prompt)
+            
+            # Create system message with instructions
+            system_message = (
+                "You are an expert in generating SAR (Suspicious Activity Report) documentation. "
+                "This prompt contains special placeholder codes (e.g., [PII_ACCOUNT_NUMBER_1], [PRESERVE_MONEY_AMOUNT_2]). "
+                "IMPORTANT: You MUST preserve these placeholder codes exactly as they appear in your response. "
+                "Do not modify, replace, or remove any placeholder code."
+            )
+            
+            # Create messages for chat models
+            messages = [
+                SystemMessage(content=system_message),
+                HumanMessage(content=processed_prompt)
+            ]
+            
+            # Update client settings for this call
+            if hasattr(self.llm_client, 'temperature'):
+                self.llm_client.temperature = temperature
+            if hasattr(self.llm_client, 'max_tokens'):
+                self.llm_client.max_tokens = max_tokens
+            elif hasattr(self.llm_client, 'num_predict'):
+                self.llm_client.num_predict = max_tokens
+            
+            # Generate response
+            if hasattr(self.llm_client, 'predict_messages'):
+                # Chat model
+                response = self.llm_client.predict_messages(messages)
+                if hasattr(response, 'content'):
+                    response_text = response.content
+                else:
+                    response_text = str(response)
+            else:
+                # Completion model
+                response_text = self.llm_client.predict(processed_prompt)
+            
+            # Restore PII/PCI and critical data in response
+            restored_response = self.pii_protector.restore_data(response_text, placeholder_map)
+            
+            return restored_response
+            
+        except Exception as e:
+            logger.error(f"Error generating content: {str(e)}")
+            # Return a fallback response
+            return "Error generating content. Please try again."
     
     def generate_section(self, section_type: str, data: Dict[str, Any]) -> str:
         """
-        Generate a specific section of the SAR narrative or recommendation with better error handling
+        Generate a specific section of the SAR narrative or recommendation
         
         Args:
             section_type: Type of section to generate

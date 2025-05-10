@@ -121,7 +121,7 @@ class LLMClient:
     
     def _call_llama_api(self, prompt: str, max_tokens: int = 1000, temperature: float = 0.3) -> str:
         """
-        Call Llama 3:8B API
+        Call Llama via Ollama with the correct API format
         
         Args:
             prompt: The prompt to send to the model
@@ -131,41 +131,82 @@ class LLMClient:
         Returns:
             str: Generated text
         """
-        if not self.endpoint or not self.api_key:
-            logger.warning("Llama API not configured, returning empty result")
+        # Check if endpoint is configured
+        if not self.endpoint:
+            logger.warning("Llama API endpoint not configured, returning empty result")
             return ""
-            
-        # Prepare request payload
-        payload = {
-            "model": "llama3-8b",
-            "prompt": prompt,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "top_p": 0.95
-        }
         
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
+        # Check if we're using Ollama (typically on localhost)
+        using_ollama = 'localhost' in self.endpoint or '127.0.0.1' in self.endpoint
         
-        # Make API request
-        try:
-            response = requests.post(
-                self.endpoint,
-                headers=headers,
-                data=json.dumps(payload),
-                timeout=30
-            )
+        if using_ollama:
+            # Ollama API format is different
+            payload = {
+                "model": "llama3:8b",  # or "llama3:8b" depending on your Ollama model name
+                "messages": [
+                    {"role": "user", "content": prompt}
+                ],
+                "stream": False,
+                "options": {
+                    "temperature": temperature,
+                    "num_predict": max_tokens
+                }
+            }
             
-            response.raise_for_status()
-            result = response.json()
+            headers = {
+                "Content-Type": "application/json"
+            }
             
-            return result.get("choices", [{}])[0].get("text", "").strip()
+            try:
+                # Make request to Ollama
+                response = requests.post(
+                    self.endpoint,
+                    headers=headers,
+                    data=json.dumps(payload),
+                    timeout=60  # Longer timeout for local model
+                )
+                
+                response.raise_for_status()
+                result = response.json()
+                
+                # Extract text from Ollama response format
+                if "message" in result:
+                    return result["message"]["content"].strip()
+                return ""
+                
+            except Exception as e:
+                logger.error(f"Error calling Ollama API: {str(e)}")
+                return ""
+        else:
+            payload = {
+                "model": "llama3-8b",
+                "prompt": prompt,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "top_p": 0.95
+            }
             
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error calling Llama API: {str(e)}")
-            return ""
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            # Make API request
+            try:
+                response = requests.post(
+                    self.endpoint,
+                    headers=headers,
+                    data=json.dumps(payload),
+                    timeout=30
+                )
+                
+                response.raise_for_status()
+                result = response.json()
+                
+                return result.get("choices", [{}])[0].get("text", "").strip()
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Error calling Llama API: {str(e)}")
+                return ""
     
     def _call_azure_openai_api(self, prompt: str, max_tokens: int = 1000, temperature: float = 0.3) -> str:
         """
@@ -262,7 +303,7 @@ class LLMClient:
     
     def generate_section(self, section_type: str, data: Dict[str, Any]) -> str:
         """
-        Generate a specific section of the SAR narrative or recommendation
+        Generate a specific section of the SAR narrative or recommendation with better error handling
         
         Args:
             section_type: Type of section to generate
@@ -271,36 +312,45 @@ class LLMClient:
         Returns:
             str: Generated section text
         """
-        # Define focused prompts for each section type
-        prompts = {
-            # SAR Narrative Sections
-            "introduction": self._create_introduction_prompt(data),
-            "prior_cases": self._create_prior_cases_prompt(data),
-            "account_subject_info": self._create_account_subject_info_prompt(data),
-            "activity_summary": self._create_activity_summary_prompt(data),
-            "transaction_samples": self._create_transaction_samples_prompt(data),
-            "conclusion": self._create_conclusion_prompt(data),
+        try:
+            # Define focused prompts for each section type
+            prompts = {
+                # SAR Narrative Sections
+                "introduction": self._create_introduction_prompt(data),
+                "prior_cases": self._create_prior_cases_prompt(data),
+                "account_subject_info": self._create_account_subject_info_prompt(data),
+                "activity_summary": self._create_activity_summary_prompt(data),
+                "transaction_samples": self._create_transaction_samples_prompt(data),
+                "conclusion": self._create_conclusion_prompt(data),
+                
+                # Recommendation Sections
+                "alert_summary": self._create_alert_summary_prompt(data),
+                "prior_case_sar_summary": self._create_prior_case_sar_summary_prompt(data),
+                "scope_of_review": self._create_scope_of_review_prompt(data),
+                "investigation_summary": self._create_investigation_summary_prompt(data),
+                "activity_analysis": self._create_activity_analysis_prompt(data),
+                "recommendation_conclusion": self._create_recommendation_conclusion_prompt(data),
+                "escalation": self._create_escalation_prompt(data),
+                "referral": self._create_referral_prompt(data),
+                "retain_close": self._create_retain_close_prompt(data)
+            }
             
-            # Recommendation Sections
-            "alert_summary": self._create_alert_summary_prompt(data),
-            "prior_case_sar_summary": self._create_prior_case_sar_summary_prompt(data),
-            "scope_of_review": self._create_scope_of_review_prompt(data),
-            "investigation_summary": self._create_investigation_summary_prompt(data),
-            "activity_analysis": self._create_activity_analysis_prompt(data),
-            "recommendation_conclusion": self._create_recommendation_conclusion_prompt(data),
-            "escalation": self._create_escalation_prompt(data),
-            "referral": self._create_referral_prompt(data),
-            "retain_close": self._create_retain_close_prompt(data)
-        }
+            # Get prompt for the requested section
+            prompt = prompts.get(section_type, "")
+            if not prompt:
+                logger.warning(f"No prompt template defined for section type: {section_type}")
+                return ""
+            
+            # Generate content with PII/PCI protection
+            return self.generate_content(prompt, max_tokens=1000, temperature=0.2)
         
-        # Get prompt for the requested section
-        prompt = prompts.get(section_type, "")
-        if not prompt:
-            logger.warning(f"No prompt template defined for section type: {section_type}")
-            return ""
-        
-        # Generate content with PII/PCI protection
-        return self.generate_content(prompt, max_tokens=1000, temperature=0.2)
+        except Exception as e:
+            # Log the error with detailed information
+            logger.error(f"Error generating section '{section_type}': {str(e)}", exc_info=True)
+            logger.debug(f"Input data for section '{section_type}': {json.dumps(data, default=str)}")
+            
+            # Return an empty string or error message rather than crashing
+            return f"Error generating {section_type} section: {str(e)}"
 
     # SAR NARRATIVE SECTION PROMPTS
 
@@ -355,12 +405,24 @@ class LLMClient:
         subjects = data.get('subjects', [])
         
         subject_text = ""
-        for subject in subjects:
-            subject_text += f"Name: {subject.get('name', '')}\n"
-            subject_text += f"Occupation: {subject.get('occupation', '')}\n"
-            subject_text += f"Employer: {subject.get('employer', '')}\n"
-            subject_text += f"Relationship: {subject.get('account_relationship', '')}\n"
-            subject_text += f"Nationality: {subject.get('nationality', '')}\n\n"
+        
+        # Check if subjects is a list or convert it if it's a string
+        if isinstance(subjects, str):
+            # Handle case where subjects is a string
+            subject_text = f"Name: {subjects}\n\n"
+        else:
+            # Process list of subject dictionaries
+            for subject in subjects:
+                # Check if subject is a dictionary, otherwise convert to a simple name
+                if isinstance(subject, dict):
+                    subject_text += f"Name: {subject.get('name', '')}\n"
+                    subject_text += f"Occupation: {subject.get('occupation', '')}\n"
+                    subject_text += f"Employer: {subject.get('employer', '')}\n"
+                    subject_text += f"Relationship: {subject.get('account_relationship', '')}\n"
+                    subject_text += f"Nationality: {subject.get('nationality', '')}\n\n"
+                else:
+                    # Handle case where subject is a string or other non-dict type
+                    subject_text += f"Name: {str(subject)}\n\n"
         
         return f"""
         Write two paragraphs: one for account information and one for subject information, using ONLY the details provided below.

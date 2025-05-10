@@ -15,7 +15,7 @@ logger = get_logger(__name__)
 class NarrativeGenerator:
     """Generates SAR recommendations and narratives based on extracted and validated data"""
     
-    def __init__(self, data: Dict[str, Any], llm_client: Optional[LLMClient] = None):
+    def __init__(self, data: Dict[str, Any], llm_client: Optional[LLMClient] = None, model: str = None):
         """
         Initialize with validated data
         
@@ -24,7 +24,8 @@ class NarrativeGenerator:
             llm_client: Optional LLM client for enhanced generation
         """
         self.data = data
-        self.llm_client = llm_client or LLMClient()
+        # Pass the model parameter when creating a new LLMClient
+        self.llm_client = llm_client or LLMClient(model=model)
         self.activity_type = None
     
     def determine_activity_type(self) -> Dict[str, Any]:
@@ -111,7 +112,7 @@ class NarrativeGenerator:
     
     def format_subject_list(self, include_relationship: bool = True) -> str:
         """
-        Format list of subjects
+        Format list of subjects with improved type checking
         
         Args:
             include_relationship: Whether to include relationship information
@@ -121,15 +122,25 @@ class NarrativeGenerator:
         """
         subjects = self.data.get("subjects", [])
         
+        # Handle the case where subjects is a string
+        if isinstance(subjects, str):
+            return subjects
+            
+        # Handle empty subjects
         if not subjects:
             return "unknown subjects"
         
         formatted_subjects = []
         for subject in subjects:
-            subject_text = subject.get("name", "unknown subject")
-            
-            if include_relationship and subject.get("account_relationship"):
-                subject_text += f" ({subject['account_relationship']})"
+            # Handle the case where subject is a dictionary or a string
+            if isinstance(subject, dict):
+                subject_text = subject.get("name", "unknown subject")
+                
+                if include_relationship and subject.get("account_relationship"):
+                    subject_text += f" ({subject['account_relationship']})"
+            else:
+                # If subject is a string or other type, convert to string
+                subject_text = str(subject)
             
             formatted_subjects.append(subject_text)
         

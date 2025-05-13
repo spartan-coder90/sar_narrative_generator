@@ -1,11 +1,13 @@
-// src/services/api.ts
+// Updated API service with alerting activity endpoint
+
 import axios from 'axios';
 import { 
   GenerateResponse, 
   UpdateSectionResponse, 
   RegenerateSectionResponse,
   CaseSummary,
-  SectionResponse
+  SectionResponse,
+  AlertingActivitySummary
 } from '../types';
 
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8081/api';
@@ -70,6 +72,37 @@ export const ApiService = {
     } catch (error) {
       console.error('Error getting sections:', error);
       throw error;
+    }
+  },
+  
+  // Get alerting activity summary
+  getAlertingActivitySummary: async (sessionId: string): Promise<AlertingActivitySummary> => {
+    try {
+      const response = await api.get(`/alerting-activity/${sessionId}`);
+      
+      if (response.data.status === 'success') {
+        return {
+          status: 'success',
+          alertingActivitySummary: response.data.alertingActivitySummary,
+          llmTemplate: response.data.llmTemplate,
+          generatedSummary: response.data.generatedSummary
+        };
+      }
+      
+      return {
+        status: 'error',
+        message: response.data.message || 'Unknown error',
+        llmTemplate: '',
+        generatedSummary: ''
+      };
+    } catch (error) {
+      console.error('Error getting alerting activity summary:', error);
+      return {
+        status: 'error',
+        message: 'Failed to fetch alerting activity summary',
+        llmTemplate: '',
+        generatedSummary: ''
+      };
     }
   },
   

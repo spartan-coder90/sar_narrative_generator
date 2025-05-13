@@ -4,7 +4,8 @@ import { Button, Alert, Spinner, Card, Row, Col, Container, Badge } from 'react-
 import { Save, Eye, ArrowLeft, CheckCircle, ArrowClockwise } from 'react-bootstrap-icons';
 import ApiService from '../services/api';
 import SectionEditor from '../components/SectionEditor';
-import { NarrativeSections, Recommendation } from '../types';
+import AlertingActivityEditor from '../components/AlertingActivityEditor';
+import { NarrativeSections, Recommendation, AlertingActivityData } from '../types';
 
 const EditPage: React.FC = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -20,6 +21,10 @@ const EditPage: React.FC = () => {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [caseInfo, setCaseInfo] = useState<any>({});
   const [activeSection, setActiveSection] = useState<{id: string, content: string, title: string, isRecommendation: boolean} | null>(null);
+  const [alertingActivityData, setAlertingActivityData] = useState<AlertingActivityData | undefined>(undefined);
+  const [alertingActivityTemplate, setAlertingActivityTemplate] = useState<string>('');
+  const [generatedAlertSummary, setGeneratedAlertSummary] = useState<string>('');
+  const [isLoadingAlertActivity, setIsLoadingAlertActivity] = useState<boolean>(false);
   
   useEffect(() => {
     const fetchSections = async () => {
@@ -85,6 +90,9 @@ const EditPage: React.FC = () => {
               isRecommendation: true
             });
           }
+          
+          // Fetch alerting activity data after sections are loaded
+          fetchAlertingActivityData();
         } else {
           setError('Failed to load narrative sections');
         }
@@ -98,6 +106,27 @@ const EditPage: React.FC = () => {
     
     fetchSections();
   }, [sessionId]);
+  
+  const fetchAlertingActivityData = async () => {
+    if (!sessionId) return;
+    
+    try {
+      setIsLoadingAlertActivity(true);
+      const response = await ApiService.getAlertingActivitySummary(sessionId);
+      
+      if (response.status === 'success') {
+        setAlertingActivityData(response.alertingActivitySummary);
+        setAlertingActivityTemplate(response.llmTemplate || '');
+        setGeneratedAlertSummary(response.generatedSummary || '');
+      } else {
+        console.warn('Failed to load alerting activity data:', response.message);
+      }
+    } catch (err) {
+      console.error('Error fetching alerting activity data:', err);
+    } finally {
+      setIsLoadingAlertActivity(false);
+    }
+  };
   
   // Helper function to extract Relevant Accounts from case_data
   const getRelevantAccountsFromCaseData = (caseData: any): string[] => {
@@ -245,6 +274,11 @@ const EditPage: React.FC = () => {
             ...prev,
             [sectionId]: newContent
           }));
+          
+          // If the regenerated section is alerting_activity, refresh the data
+          if (sectionId === 'alerting_activity') {
+            fetchAlertingActivityData();
+          }
         } else {
           // Update narrative section
           setSections(prev => ({
@@ -325,6 +359,36 @@ const EditPage: React.FC = () => {
       
       return narrativeHelpText[sectionId] || "";
     }
+  };
+  
+  // Render appropriate editor based on section type
+  const renderSectionEditor = () => {
+    if (!activeSection) return null;
+    
+    // If this is the alerting activity section, use the special editor
+    if (activeSection.isRecommendation && activeSection.id === 'alerting_activity') {
+      return (
+        <AlertingActivityEditor 
+          sessionId={sessionId || ''}
+          alertingActivityData={alertingActivityData}
+          generatedSummary={generatedAlertSummary}
+          onChange={handleContentChange}
+          content={activeSection.content}
+        />
+      );
+    }
+    
+    // Otherwise use the standard section editor
+    return (
+      <SectionEditor 
+        section={{
+          id: activeSection.id,
+          title: activeSection.title,
+          content: activeSection.content
+        }}
+        onChange={handleContentChange}
+      />
+    );
   };
   
   if (isLoading) {
@@ -489,29 +553,27 @@ const EditPage: React.FC = () => {
                 </div>
               )}
               
-              {activeSection && (
-                <div>
-                  <SectionEditor 
-                    section={{
-                      id: activeSection.id,
-                      title: activeSection.title,
-                      content: activeSection.content
-                    }}
-                    onChange={handleContentChange}
-                  />
-                  
-                  <div className="d-flex justify-content-end mt-3">
-                    <Button
-                      variant="primary"
-                      onClick={handleSaveSection}
-                      disabled={isSaving}
-                    >
-                      <Save className="me-1" />
-                      {isSaving ? 'Saving...' : 'Save Changes'}
-                    </Button>
-                  </div>
+              {isLoadingAlertActivity && activeSection?.id === 'alerting_activity' ? (
+                <div className="text-center py-4">
+                  <Spinner animation="border" role="status">
+                    <span className="visually-hidden">Loading alerting activity data...</span>
+                  </Spinner>
+                  <p className="mt-2">Loading alerting activity data...</p>
                 </div>
+              ) : (
+                activeSection && renderSectionEditor()
               )}
+              
+              <div className="d-flex justify-content-end mt-3">
+                <Button
+                  variant="primary"
+                  onClick={handleSaveSection}
+                  disabled={isSaving || !activeSection}
+                >
+                  <Save className="me-1" />
+                  {isSaving ? 'Saving...' : 'Save Changes'}
+                </Button>
+              </div>
             </Card.Body>
           </Card>
         </Col>

@@ -1094,13 +1094,172 @@ class TransactionProcessor:
     
     def get_all_transaction_data(self) -> Dict[str, Any]:
         """
-        Get all the processed transaction data
+        Get all the processed transaction data including alerting activity summary
         
         Returns:
             Dict: All processed transaction data
         """
+        # Calculate the alerting activity summary
+        alerting_activity_summary = self.calculate_alerting_activity_summary()
+        
+        # Add the summary to the transaction data
+        self.transaction_data["alerting_activity_summary"] = alerting_activity_summary
+        
         return self.transaction_data
     
+    """
+    Add new function to calculate alerting activity summary
+    """
+
+    def calculate_alerting_activity_summary(self) -> Dict[str, Any]:
+        """
+        Calculate detailed alerting activity summary including credit and debit activity
+        
+        Returns:
+            Dict: Alerting activity summary with detailed credit and debit information
+        """
+        # Initialize the summary object
+        summary = {
+            "alertInfo": {
+                "caseNumber": "",
+                "alertingAccounts": "",
+                "alertingMonths": "",
+                "alertDescription": ""
+            },
+            "account": "",
+            "creditSummary": {
+                "percentTotal": 0,
+                "amountTotal": 0,
+                "transactionCount": 0,
+                "minCreditAmount": float('inf'),
+                "maxCreditAmount": 0,
+                "minTransactionDate": "",
+                "maxTransactionDate": "",
+                "highestPercentType": "",
+                "highestPercentValue": 0
+            },
+            "debitSummary": {
+                "percentTotal": 0,
+                "amountTotal": 0,
+                "transactionCount": 0,
+                "minDebitAmount": float('inf'),
+                "maxDebitAmount": 0,
+                "minTransactionDate": "",
+                "maxTransactionDate": "",
+                "highestPercentType": "",
+                "highestPercentValue": 0
+            }
+        }
+        
+        # Extract alert information
+        alert_info = self.case_data.get("alert_info", [])
+        if isinstance(alert_info, dict):
+            alert_info = [alert_info]
+        
+        # Get case number
+        summary["alertInfo"]["caseNumber"] = self.case_data.get("case_number", "")
+        
+        # Get account information
+        account_info = self.case_data.get("account_info", {})
+        account_type = account_info.get("account_type", "")
+        account_number = account_info.get("account_number", "")
+        
+        summary["account"] = account_number
+        summary["alertInfo"]["alertingAccounts"] = f"{account_type} {account_number}"
+        
+        # Extract alert months and descriptions
+        alert_months = []
+        alert_descriptions = []
+        
+        for alert in alert_info:
+            if isinstance(alert, dict):
+                if alert.get("alert_month"):
+                    alert_months.append(alert.get("alert_month"))
+                if alert.get("description"):
+                    alert_descriptions.append(alert.get("description"))
+        
+        summary["alertInfo"]["alertingMonths"] = ", ".join(alert_months) if alert_months else ""
+        summary["alertInfo"]["alertDescription"] = "; ".join(alert_descriptions) if alert_descriptions else ""
+        
+        # Calculate credit and debit summaries from activity data
+        activity_summary = self.transaction_data.get("activity_summary", {})
+        for account_num, account_data in activity_summary.get("accounts", {}).items():
+            # Process credits
+            credit_data = account_data.get("credits", {})
+            credit_summary = summary["creditSummary"]
+            
+            credit_summary["percentTotal"] = credit_data.get("total_percent", 0)
+            credit_summary["amountTotal"] = credit_data.get("total_amount", 0)
+            credit_summary["transactionCount"] = credit_data.get("total_transactions", 0)
+            
+            if credit_data.get("min_amount", float('inf')) < credit_summary["minCreditAmount"]:
+                credit_summary["minCreditAmount"] = credit_data.get("min_amount", float('inf'))
+            
+            if credit_data.get("max_amount", 0) > credit_summary["maxCreditAmount"]:
+                credit_summary["maxCreditAmount"] = credit_data.get("max_amount", 0)
+            
+            if credit_data.get("earliest_date"):
+                if not credit_summary["minTransactionDate"] or self._compare_dates(credit_data.get("earliest_date"), credit_summary["minTransactionDate"]) < 0:
+                    credit_summary["minTransactionDate"] = credit_data.get("earliest_date")
+            
+            if credit_data.get("latest_date"):
+                if not credit_summary["maxTransactionDate"] or self._compare_dates(credit_data.get("latest_date"), credit_summary["maxTransactionDate"]) > 0:
+                    credit_summary["maxTransactionDate"] = credit_data.get("latest_date")
+            
+            # Find credit type with highest percentage
+            highest_percent = 0
+            highest_type = ""
+            for txn_type, txn_data in credit_data.get("by_type", {}).items():
+                percent = txn_data.get("percent", 0)
+                if percent > highest_percent:
+                    highest_percent = percent
+                    highest_type = txn_type
+            
+            credit_summary["highestPercentType"] = highest_type
+            credit_summary["highestPercentValue"] = highest_percent
+            
+            # Process debits
+            debit_data = account_data.get("debits", {})
+            debit_summary = summary["debitSummary"]
+            
+            debit_summary["percentTotal"] = debit_data.get("total_percent", 0)
+            debit_summary["amountTotal"] = debit_data.get("total_amount", 0)
+            debit_summary["transactionCount"] = debit_data.get("total_transactions", 0)
+            
+            if debit_data.get("min_amount", float('inf')) < debit_summary["minDebitAmount"]:
+                debit_summary["minDebitAmount"] = debit_data.get("min_amount", float('inf'))
+            
+            if debit_data.get("max_amount", 0) > debit_summary["maxDebitAmount"]:
+                debit_summary["maxDebitAmount"] = debit_data.get("max_amount", 0)
+            
+            if debit_data.get("earliest_date"):
+                if not debit_summary["minTransactionDate"] or self._compare_dates(debit_data.get("earliest_date"), debit_summary["minTransactionDate"]) < 0:
+                    debit_summary["minTransactionDate"] = debit_data.get("earliest_date")
+            
+            if debit_data.get("latest_date"):
+                if not debit_summary["maxTransactionDate"] or self._compare_dates(debit_data.get("latest_date"), debit_summary["maxTransactionDate"]) > 0:
+                    debit_summary["maxTransactionDate"] = debit_data.get("latest_date")
+            
+            # Find debit type with highest percentage
+            highest_percent = 0
+            highest_type = ""
+            for txn_type, txn_data in debit_data.get("by_type", {}).items():
+                percent = txn_data.get("percent", 0)
+                if percent > highest_percent:
+                    highest_percent = percent
+                    highest_type = txn_type
+            
+            debit_summary["highestPercentType"] = highest_type
+            debit_summary["highestPercentValue"] = highest_percent
+        
+        # Clean up any infinity values
+        if summary["creditSummary"]["minCreditAmount"] == float('inf'):
+            summary["creditSummary"]["minCreditAmount"] = 0
+        
+        if summary["debitSummary"]["minDebitAmount"] == float('inf'):
+            summary["debitSummary"]["minDebitAmount"] = 0
+        
+        return summary
     # Helper methods
     
     def _to_float(self, value: Any) -> float:

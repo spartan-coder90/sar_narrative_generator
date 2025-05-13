@@ -539,7 +539,7 @@ class NarrativeGenerator:
                 sample_text += "."
         
         return sample_text
-    
+
     def prepare_conclusion_data(self) -> Dict[str, Any]:
         """
         Prepare data for conclusion section
@@ -916,6 +916,132 @@ What is the purpose of the wire transactions occurring in the customer's account
             "sections": sections,
             "recommendation": recommendation
         }
+    """
+Update generate_alerting_activity method in NarrativeGenerator
+"""
+
+    def generate_alerting_activity(self) -> str:
+        """
+        Generate alerting activity section for recommendation
+        
+        Returns:
+            str: Alerting activity section
+        """
+        case_number = self.data.get("case_number", "")
+        account_info = self.data.get("account_info", {})
+        alert_info = self.data.get("alert_info", [])
+        alerting_activity_summary = self.data.get("alerting_activity_summary", {})
+        
+        # Check if we have the alerting activity summary
+        if alerting_activity_summary and isinstance(alerting_activity_summary, dict):
+            # Use the summary to create a more detailed section
+            alert_info_data = alerting_activity_summary.get("alertInfo", {})
+            account = alerting_activity_summary.get("account", "")
+            credit_summary = alerting_activity_summary.get("creditSummary", {})
+            debit_summary = alerting_activity_summary.get("debitSummary", {})
+            
+            # Format the data for the LLM
+            formatted_template_data = {
+                "case_number": alert_info_data.get("caseNumber", case_number),
+                "alerting_accounts": alert_info_data.get("alertingAccounts", ""),
+                "alerting_months": alert_info_data.get("alertingMonths", ""),
+                "alert_description": alert_info_data.get("alertDescription", ""),
+                "account_number": account,
+                "credit_amount_total": self.format_currency(credit_summary.get("amountTotal", 0)),
+                "credit_transaction_count": credit_summary.get("transactionCount", 0),
+                "credit_min_date": credit_summary.get("minTransactionDate", ""),
+                "credit_max_date": credit_summary.get("maxTransactionDate", ""),
+                "credit_min_amount": self.format_currency(credit_summary.get("minCreditAmount", 0)),
+                "credit_max_amount": self.format_currency(credit_summary.get("maxCreditAmount", 0)),
+                "credit_highest_percent_type": credit_summary.get("highestPercentType", ""),
+                "credit_highest_percent_value": credit_summary.get("highestPercentValue", 0),
+                "debit_amount_total": self.format_currency(debit_summary.get("amountTotal", 0)),
+                "debit_transaction_count": debit_summary.get("transactionCount", 0),
+                "debit_min_date": debit_summary.get("minTransactionDate", ""),
+                "debit_max_date": debit_summary.get("maxTransactionDate", ""),
+                "debit_min_amount": self.format_currency(debit_summary.get("minDebitAmount", 0)),
+                "debit_max_amount": self.format_currency(debit_summary.get("maxDebitAmount", 0)),
+                "debit_highest_percent_type": debit_summary.get("highestPercentType", ""),
+                "debit_highest_percent_value": debit_summary.get("highestPercentValue", 0)
+            }
+            
+            # Create prompt for LLM
+            alerting_activity_prompt = f"""Summarize this bank account alert information directly without any introductory phrases:
+
+    ALERT INFORMATION:
+    - Case Number: {formatted_template_data["case_number"]}
+    - Alerting Account(s): {formatted_template_data["alerting_accounts"]}
+    - Alerting Month(s): {formatted_template_data["alerting_months"]}
+    - Alert Description: {formatted_template_data["alert_description"]}
+
+    ACCOUNT: {formatted_template_data["account_number"]}
+
+    CREDITS:
+    - Total amount: {formatted_template_data["credit_amount_total"]}
+    - Number of transactions: {formatted_template_data["credit_transaction_count"]}
+    - Date range: {formatted_template_data["credit_min_date"]} to {formatted_template_data["credit_max_date"]}
+    - Transaction amounts: {formatted_template_data["credit_min_amount"]} to {formatted_template_data["credit_max_amount"]}
+    - Most common activity: {formatted_template_data["credit_highest_percent_type"]} ({formatted_template_data["credit_highest_percent_value"]}%)
+
+    DEBITS:
+    - Total amount: {formatted_template_data["debit_amount_total"]}
+    - Number of transactions: {formatted_template_data["debit_transaction_count"]}
+    - Date range: {formatted_template_data["debit_min_date"]} to {formatted_template_data["debit_max_date"]}
+    - Transaction amounts: {formatted_template_data["debit_min_amount"]} to {formatted_template_data["debit_max_amount"]}
+    - Most common activity: {formatted_template_data["debit_highest_percent_type"]} ({formatted_template_data["debit_highest_percent_value"]}%)
+
+    Write a clear summary in this exact format:
+
+    1. First paragraph: Start with the Case Number, then describe the alerting accounts, alerting months, and include a brief description of the alert activity.
+
+    2. Second paragraph: Summarize credit activity focusing on total amount, number of transactions, most common type of activity with its percentage, and range of amounts.
+
+    3. Third paragraph: Summarize debit activity focusing on total amount, number of transactions, most common type of activity with its percentage, and range of amounts.
+
+    Keep sentences short and simple. Do not use phrases like "Here is the summary" or "In conclusion." Start immediately with the case number and keep the summary factual without analysis beyond what's shown in the data."""
+            
+            # Generate content using LLM
+            alerting_activity_content = self.llm_client.generate_content(alerting_activity_prompt, max_tokens=600, temperature=0.2)
+            if alerting_activity_content:
+                return alerting_activity_content
+        
+        # Fall back to original method if alerting activity summary is not available
+        # Prepare data for LLM
+        alert_data = {
+            "case_number": case_number,
+            "account_info": account_info,
+            "alert_info": alert_info,
+            "subject_names": self.format_subject_list(include_relationship=False)
+        }
+        
+        # Use LLM to generate content
+        alerting_activity_content = self.llm_client.generate_section("alert_summary", alert_data)
+        if alerting_activity_content:
+            return alerting_activity_content
+        
+        # Fallback approach
+        if isinstance(alert_info, dict):
+            alert_info = [alert_info]
+        elif not isinstance(alert_info, list):
+            alert_info = []
+        
+        if not alert_info:
+            return f"{case_number}: Unknown alerting account alerted for unknown reason."
+        
+        # Format alert month and details
+        alert_months = []
+        alert_descriptions = []
+        
+        for alert in alert_info:
+            if alert.get("alert_month"):
+                alert_months.append(alert.get("alert_month"))
+            if alert.get("description"):
+                alert_descriptions.append(alert.get("description"))
+        
+        alert_month_text = ", ".join(alert_months) if alert_months else "unknown month"
+        alert_desc_text = "; ".join(alert_descriptions) if alert_descriptions else "unknown reason"
+        
+        return f"{case_number}: {account_info.get('account_type', 'account')} {account_info.get('account_number', '')} alerted in {alert_month_text} for {alert_desc_text}."
     
     def _split_narrative_into_sections(self, narrative: str) -> Dict[str, Dict[str, str]]:
         """

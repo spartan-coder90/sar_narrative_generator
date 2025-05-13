@@ -191,3 +191,51 @@ export interface RegenerateSectionResponse {
     type?: string;
   };
 }
+
+// Add types for alerting activity summary
+
+export interface AlertInfo {
+  caseNumber: string;
+  alertingAccounts: string;
+  alertingMonths: string;
+  alertDescription: string;
+}
+
+export interface CreditSummary {
+  percentTotal: number;
+  amountTotal: number;
+  transactionCount: number;
+  minCreditAmount: number;
+  maxCreditAmount: number;
+  minTransactionDate: string;
+  maxTransactionDate: string;
+  highestPercentType: string;
+  highestPercentValue: number;
+}
+
+export interface DebitSummary {
+  percentTotal: number;
+  amountTotal: number;
+  transactionCount: number;
+  minDebitAmount: number;
+  maxDebitAmount: number;
+  minTransactionDate: string;
+  maxTransactionDate: string;
+  highestPercentType: string;
+  highestPercentValue: number;
+}
+
+export interface AlertingActivityData {
+  alertInfo: AlertInfo;
+  account: string;
+  creditSummary: CreditSummary;
+  debitSummary: DebitSummary;
+}
+
+export interface AlertingActivitySummary {
+  status: string;
+  message?: string;
+  alertingActivitySummary?: AlertingActivityData;
+  llmTemplate?: string;
+  generatedSummary?: string;
+}

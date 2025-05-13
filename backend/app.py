@@ -371,6 +371,107 @@ def get_correct_account_number(case_data):
     
     return account_number
 
+"""
+Add the alerting activity endpoint to app.py
+"""
+
+@app.route('/api/alerting-activity/<session_id>', methods=['GET'])
+def get_alerting_activity(session_id):
+    """
+    Get detailed alerting activity summary for a session
+    """
+    # Validate session ID to prevent directory traversal
+    if not re.match(r'^[0-9a-f\-]+$', session_id):
+        return jsonify({
+            "status": "error",
+            "message": "Invalid session ID format"
+        }), 400
+    
+    data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
+    
+    if not os.path.exists(data_path):
+        return jsonify({
+            "status": "error",
+            "message": "Session not found"
+        }), 404
+    
+    try:
+        data = load_from_json_file(data_path)
+        
+        # Check if transaction data and alerting activity summary exist
+        transaction_data = data.get("transaction_data", {})
+        alerting_activity_summary = transaction_data.get("alerting_activity_summary", {})
+        
+        if not alerting_activity_summary:
+            # Generate it if not available
+            case_data = data.get("case_data", {})
+            transaction_processor = TransactionProcessor(case_data)
+            alerting_activity_summary = transaction_processor.calculate_alerting_activity_summary()
+            
+            # Save it back to the session data
+            if "transaction_data" not in data:
+                data["transaction_data"] = {}
+            
+            data["transaction_data"]["alerting_activity_summary"] = alerting_activity_summary
+            save_to_json_file(data, data_path)
+        
+        # Get LLM template for formatting the alerting activity
+        llm_template = """Summarize this bank account alert information directly without any introductory phrases:
+
+ALERT INFORMATION:
+- Case Number: {case_number}
+- Alerting Account(s): {alerting_accounts}
+- Alerting Month(s): {alerting_months}
+- Alert Description: {alert_description}
+
+ACCOUNT: {account_number}
+
+CREDITS:
+- Total amount: ${credit_amount_total}
+- Number of transactions: {credit_transaction_count}
+- Date range: {credit_min_date} to {credit_max_date}
+- Transaction amounts: ${credit_min_amount} to ${credit_max_amount}
+- Most common activity: {credit_highest_percent_type} ({credit_highest_percent_value}%)
+
+DEBITS:
+- Total amount: ${debit_amount_total}
+- Number of transactions: {debit_transaction_count}
+- Date range: {debit_min_date} to {debit_max_date}
+- Transaction amounts: ${debit_min_amount} to ${debit_max_amount}
+- Most common activity: {debit_highest_percent_type} ({debit_highest_percent_value}%)
+
+Write a clear summary in this exact format:
+
+1. First paragraph: Start with the Case Number, then describe the alerting accounts, alerting months, and include a brief description of the alert activity.
+
+2. Second paragraph: Summarize credit activity focusing on total amount, number of transactions, most common type of activity with its percentage, and range of amounts.
+
+3. Third paragraph: Summarize debit activity focusing on total amount, number of transactions, most common type of activity with its percentage, and range of amounts.
+
+Keep sentences short and simple. Do not use phrases like "Here is the summary" or "In conclusion." Start immediately with the case number and keep the summary factual without analysis beyond what's shown in the data."""
+        
+        # Try to get a generated summary from the recommendation data
+        generated_summary = ""
+        if "recommendation" in data and "alerting_activity" in data["recommendation"]:
+            generated_summary = data["recommendation"]["alerting_activity"]
+            
+        # Create the response data
+        response_data = {
+            "status": "success",
+            "alertingActivitySummary": alerting_activity_summary,
+            "llmTemplate": llm_template,
+            "generatedSummary": generated_summary
+        }
+        
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        logger.error(f"Error fetching alerting activity summary: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": f"Error fetching alerting activity summary: {str(e)}"
+        }), 500
+        
 @app.route('/api/regenerate/<session_id>/<section_id>', methods=['POST'])
 def regenerate_section(session_id, section_id):
     """

@@ -1,5 +1,5 @@
 """
-Fixed version of app.py with duplicate route removed
+Main Flask application for SAR Narrative Generator with case selection support
 """
 import os
 import uuid
@@ -9,11 +9,9 @@ import json
 import tempfile
 from datetime import datetime
 import logging
-from backend.integrations.llm_client import LLMClient
 from werkzeug.utils import secure_filename
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
-
 
 # Add the parent directory to Python path so imports work
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -23,26 +21,16 @@ if project_root not in sys.path:
 # Import config module and other modules
 import backend.config as config
 from backend.utils.logger import get_logger
-from backend.processors.excel_processor import ExcelProcessor
 from backend.processors.case_processor import CaseProcessor
 from backend.processors.data_validator import DataValidator
+from backend.processors.transaction_processor import TransactionProcessor
 from backend.generators.narrative_generator import NarrativeGenerator
 from backend.utils.json_utils import save_to_json_file, load_from_json_file
-
+from backend.integrations.llm_client import LLMClient
+from backend.data.case_repository import get_case, get_full_case, get_available_cases
 
 # Set up logging
 logger = get_logger(__name__)
-
-#constants 
-VALID_SECTION_IDS = [
-    "introduction", 
-    "prior_cases", 
-    "account_info", 
-    "activity_summary", 
-    "conclusion", 
-    "subject_info", 
-    "transaction_samples"
-]
 
 # Initialize app
 app = Flask(__name__)
@@ -63,6 +51,16 @@ CORS(app)  # Enable CORS for all routes
 # Create required directories
 os.makedirs(config.UPLOAD_DIR, exist_ok=True)  # Using UPLOAD_DIR
 
+# Valid section IDs for narrative
+VALID_SECTION_IDS = [
+    "introduction", 
+    "prior_cases", 
+    "account_info", 
+    "activity_summary", 
+    "conclusion", 
+    "subject_info", 
+    "transaction_samples"
+]
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -72,191 +70,56 @@ def health_check():
         "version": "1.0.0"
     }), 200
 
-@app.route('/api/generate', methods=['POST'])
-def generate_narrative():
-    """
-    Process uploaded files and generate SAR narrative
-    """
-    # Check if files were uploaded
-    if 'caseFile' not in request.files or 'excelFile' not in request.files:
-        return jsonify({
-            "status": "error",
-            "message": "Both case file and Excel file are required"
-        }), 400
-    
-    case_file = request.files['caseFile']
-    excel_file = request.files['excelFile']
-    
-    if case_file.filename == '' or excel_file.filename == '':
-        return jsonify({
-            "status": "error",
-            "message": "Empty file names"
-        }), 400
-    
-    # Get selected model (default to llama3-8b if not specified)
-    selected_model = request.form.get('model', 'llama3-8b')
-    
-    # Validate model selection
-    valid_models = ['llama3-8b', 'gpt-3.5-turbo', 'gpt-4']
-    if selected_model not in valid_models:
-        selected_model = 'llama3-8b'  # Default to Llama 3 if invalid
-    
-    # Create a unique session folder for this request
-    session_id = str(uuid.uuid4())
-    upload_folder = os.path.join(app.config['UPLOAD_FOLDER'], session_id)
-    os.makedirs(upload_folder, exist_ok=True)
-    
-    # Save uploaded files
-    case_path = os.path.join(upload_folder, secure_filename(case_file.filename))
-    excel_path = os.path.join(upload_folder, secure_filename(excel_file.filename))
-    
-    case_file.save(case_path)
-    excel_file.save(excel_path)
-    
+@app.route('/api/cases', methods=['GET'])
+def get_available_case_list():
+    """Get list of available cases for UI dropdown"""
     try:
-        # Process case document
-        logger.info(f"Processing case file: {os.path.basename(case_path)}")
-        case_processor = CaseProcessor(case_path)
-        case_data = case_processor.process()
-        
-        # Process Excel file
-        logger.info(f"Processing Excel file: {os.path.basename(excel_path)}")
-        excel_processor = ExcelProcessor(excel_path)
-        excel_data = excel_processor.process()
-        
-        # Validate data
-        validator = DataValidator(case_data, excel_data)
-        is_valid, errors, warnings = validator.validate()
-        
-        if not is_valid and errors:
-            return jsonify({
-                "status": "error",
-                "message": "Validation failed",
-                "errors": errors,
-                "warnings": warnings
-            }), 400
-        
-        # Fill missing data and get combined result
-        combined_data = validator.fill_missing_data()
-        
-        # Generate narrative and recommendations
-        try:
-            # Initialize LLM client with selected model
-            llm_client = LLMClient(model=selected_model)
-            
-            # Generate narrative and recommendation sections
-            narrative_generator = NarrativeGenerator(combined_data, llm_client)
-            generated_data = narrative_generator.generate_all()
-            
-            narrative = generated_data["narrative"]
-            sections = generated_data["sections"]
-            recommendation = generated_data["recommendation"]
-            
-        except Exception as e:
-            logger.error(f"Error generating narrative: {str(e)}", exc_info=True)
-            return jsonify({
-                "status": "error",
-                "message": f"Error in narrative generation: {str(e)}"
-            }), 500
-        
-        # Create response with session ID for future reference
-        response = {
+        cases = get_available_cases()
+        return jsonify({
             "status": "success",
-            "sessionId": session_id,
-            "caseNumber": case_data.get("case_number", ""),
-            "accountNumber": case_data.get("account_info", {}).get("account_number", ""),
-            "dateGenerated": datetime.now().isoformat(),
-            "warnings": warnings,
-            "sections": sections,
-            "recommendation": recommendation,
-            "caseFilename": os.path.basename(case_path),
-            "excelFilename": os.path.basename(excel_path),
-            # Add Word Control Macro data if available
-            "wordControl": excel_data.get("word_control_macro", {})
-        }
-        
-        # Include case and excel data for complete context
-        response["case_data"] = case_data
-        response["excel_data"] = excel_data
-        response["combined_data"] = combined_data
-        
-        # Save a copy of the processed data for later use
-        save_to_json_file({
-            "case_data": case_data,
-            "excel_data": excel_data,
-            "combined_data": combined_data,
-            "narrative": narrative,
-            "sections": sections,
-            "recommendation": recommendation,
-            "wordControl": excel_data.get("word_control_macro", {})
-        }, os.path.join(upload_folder, 'data.json'))
-        
-        return jsonify(response), 200
-    
+            "cases": cases
+        }), 200
     except Exception as e:
-        logger.error(f"Error generating narrative: {str(e)}", exc_info=True)
-        # Clean up upload folder on error
-        try:
-            import shutil
-            shutil.rmtree(upload_folder)
-        except Exception as cleanup_error:
-            logger.error(f"Error cleaning up temporary files: {str(cleanup_error)}")
-            
+        logger.error(f"Error retrieving available cases: {str(e)}")
         return jsonify({
             "status": "error",
-            "message": f"Error generating narrative: {str(e)}"
+            "message": f"Error retrieving available cases: {str(e)}"
         }), 500
-
 
 @app.route('/api/generate-from-case', methods=['POST'])
 def generate_from_case():
     """
-    Process selected case and uploaded Excel file to generate SAR narrative
+    Process selected case to generate SAR narrative
     
     Requires:
     - case_number: Case number to use from static repository
-    - excelFile: Transaction Excel file
+    - model: (optional) LLM model to use for generation
     
     Returns:
-    - narrative: Generated SAR narrative
-    - warnings: Any warnings during processing
-    - errors: Any errors during processing
+    - sessionId: Session ID for future requests
+    - sections: Generated SAR narrative sections
+    - warning: Any warnings during processing
     """
-    # Check if case_number was provided
-    case_number = request.form.get('case_number')
+    # Get case_number from request
+    data = request.get_json() or {}
+    case_number = data.get('case_number')
+    
     if not case_number:
         return jsonify({
             "status": "error",
             "message": "Case number is required"
         }), 400
     
-    # Check if Excel file was uploaded
-    if 'excelFile' not in request.files:
-        return jsonify({
-            "status": "error",
-            "message": "Excel file is required"
-        }), 400
-    
-    excel_file = request.files['excelFile']
-    
-    # Check if file is empty
-    if excel_file.filename == '':
-        return jsonify({
-            "status": "error",
-            "message": "Empty Excel file name"
-        }), 400
-    
     # Get selected model (default to llama3-8b if not specified)
-    selected_model = request.form.get('model', 'llama3-8b')
+    selected_model = data.get('model', 'llama3-8b')
     
     # Validate model selection
     valid_models = ['llama3-8b', 'gpt-3.5-turbo', 'gpt-4']
     if selected_model not in valid_models:
         selected_model = 'llama3-8b'  # Default to Llama 3 if invalid
     
-    # Retrieve static case data
+    # Retrieve case data from repository
     try:
-        from backend.data.case_repository import get_case, get_full_case
         case_data = get_case(case_number)
         full_case_data = get_full_case(case_number)
         
@@ -282,16 +145,46 @@ def generate_from_case():
     upload_folder = os.path.join(app.config['UPLOAD_FOLDER'], session_id)
     os.makedirs(upload_folder, exist_ok=True)
     
-    # Save uploaded Excel file
-    excel_filename = secure_filename(excel_file.filename)
-    excel_path = os.path.join(upload_folder, excel_filename)
-    excel_file.save(excel_path)
-    
     try:
-        # Process Excel file
-        logger.info(f"Processing Excel file: {os.path.basename(excel_path)}")
-        excel_processor = ExcelProcessor(excel_path)
-        excel_data = excel_processor.process()
+        # Process transaction data
+        logger.info(f"Processing transaction data for case: {case_number}")
+        transaction_processor = TransactionProcessor(case_data)
+        transaction_data = transaction_processor.get_all_transaction_data()
+        
+        # Since we're not using Excel files anymore, we'll adapt the excel_data structure
+        # to work with our transaction data
+        excel_data = {
+            "activity_summary": transaction_data.get("activity_summary", {}),
+            "unusual_activity": transaction_data.get("unusual_activity", {}),
+            "transaction_summary": {
+                "total_credits": transaction_data.get("activity_summary", {}).get("totals", {}).get("credits", {}).get("total_amount", 0),
+                "total_debits": transaction_data.get("activity_summary", {}).get("totals", {}).get("debits", {}).get("total_amount", 0),
+                "credit_breakdown": [],
+                "debit_breakdown": []
+            },
+            "account_summaries": transaction_data.get("activity_summary", {}).get("accounts", {}),
+            "cta_sample": transaction_data.get("cta_sample", {}),
+            "bip_sample": transaction_data.get("bip_sample", {}),
+            "inter_account_transfers": []
+        }
+        
+        # Create credit and debit breakdowns from activity summary
+        for account_num, account_data in transaction_data.get("activity_summary", {}).get("accounts", {}).items():
+            # Credit breakdown
+            for txn_type, txn_data in account_data.get("credits", {}).get("by_type", {}).items():
+                excel_data["transaction_summary"]["credit_breakdown"].append({
+                    "type": txn_type,
+                    "amount": txn_data.get("amount", 0),
+                    "count": txn_data.get("count", 0)
+                })
+            
+            # Debit breakdown
+            for txn_type, txn_data in account_data.get("debits", {}).get("by_type", {}).items():
+                excel_data["transaction_summary"]["debit_breakdown"].append({
+                    "type": txn_type,
+                    "amount": txn_data.get("amount", 0),
+                    "count": txn_data.get("count", 0)
+                })
         
         # Validate data
         validator = DataValidator(case_data, excel_data)
@@ -307,6 +200,16 @@ def generate_from_case():
         
         # Fill missing data and get combined result
         combined_data = validator.fill_missing_data()
+        
+        # Add the transaction data to the combined data
+        combined_data.update({
+            "activity_summary": transaction_data.get("activity_summary", {}),
+            "transactions": transaction_data.get("transactions", {}),
+            "unusual_activity": transaction_data.get("unusual_activity", {}),
+            "counterparties": transaction_data.get("counterparties", {}),
+            "cta_sample": transaction_data.get("cta_sample", {}),
+            "bip_sample": transaction_data.get("bip_sample", {})
+        })
         
         # Generate narrative and recommendations
         try:
@@ -338,25 +241,24 @@ def generate_from_case():
             "warnings": warnings,
             "sections": sections,
             "recommendation": recommendation,
-            "excelFilename": os.path.basename(excel_path),
-            "wordControl": excel_data.get("word_control_macro", {}),
-            "fullCaseData": case_data.get("full_data", None)
+            "wordControl": excel_data.get("word_control_macro", {})
         }
         
-        # Include full data for context
+        # Include case and excel data for complete context
         response["case_data"] = case_data
         response["excel_data"] = excel_data
         response["combined_data"] = combined_data
+        response["transaction_data"] = transaction_data
         
         # Save a copy of the processed data for later use
         save_to_json_file({
             "case_data": case_data,
             "excel_data": excel_data,
             "combined_data": combined_data,
+            "transaction_data": transaction_data,
             "narrative": narrative,
             "sections": sections,
-            "recommendation": recommendation,
-            "wordControl": excel_data.get("word_control_macro", {})
+            "recommendation": recommendation
         }, os.path.join(upload_folder, 'data.json'))
         
         return jsonify(response), 200
@@ -374,7 +276,6 @@ def generate_from_case():
             "status": "error",
             "message": f"Error generating narrative: {str(e)}"
         }), 500
-
 
 @app.route('/api/sections/<session_id>', methods=['GET'])
 def get_sections(session_id):
@@ -406,6 +307,7 @@ def get_sections(session_id):
             "recommendation": data.get("recommendation", {}),
             "case_data": data["case_data"],
             "excel_data": data["excel_data"],
+            "transaction_data": data.get("transaction_data", {}),
             "caseInfo": {
                 "caseNumber": data["case_data"].get("case_number", ""),
                 "accountNumber": data["case_data"].get("account_info", {}).get("account_number", ""),
@@ -421,7 +323,6 @@ def get_sections(session_id):
             "status": "error",
             "message": f"Error fetching sections: {str(e)}"
         }), 500
-
 
 @app.route('/api/regenerate/<session_id>/<section_id>', methods=['POST'])
 def regenerate_section(session_id, section_id):
@@ -465,6 +366,18 @@ def regenerate_section(session_id, section_id):
         
         # Regenerate the specified section
         combined_data = data["combined_data"]
+        transaction_data = data.get("transaction_data", {})
+        
+        # Add transaction data to combined data if it's not already there
+        if transaction_data:
+            combined_data.update({
+                "activity_summary": transaction_data.get("activity_summary", {}),
+                "transactions": transaction_data.get("transactions", {}),
+                "unusual_activity": transaction_data.get("unusual_activity", {}),
+                "counterparties": transaction_data.get("counterparties", {}),
+                "cta_sample": transaction_data.get("cta_sample", {}),
+                "bip_sample": transaction_data.get("bip_sample", {})
+            })
         
         # Initialize LLM client
         llm_client = LLMClient()
@@ -539,8 +452,7 @@ def regenerate_section(session_id, section_id):
             }
         
         # Save updated data
-        with open(data_path, 'w') as f:
-            json.dump(data, f, default=str)
+        save_to_json_file(data, data_path)
         
         return jsonify({
             "status": "success",
@@ -553,7 +465,6 @@ def regenerate_section(session_id, section_id):
             "status": "error",
             "message": f"Error regenerating section: {str(e)}"
         }), 500
-
 
 @app.route('/api/sections/<session_id>/<section_id>', methods=['PUT'])
 def update_section(session_id, section_id):
@@ -600,8 +511,7 @@ def update_section(session_id, section_id):
         data["narrative"] = narrative
         
         # Save updated data
-        with open(data_path, 'w') as f:
-            json.dump(data, f, default=str)
+        save_to_json_file(data, data_path)
         
         return jsonify({
             "status": "success",
@@ -614,7 +524,6 @@ def update_section(session_id, section_id):
             "status": "error",
             "message": f"Error updating section: {str(e)}"
         }), 500
-
 
 @app.route('/api/recommendations/<session_id>/<section_id>', methods=['PUT'])
 def update_recommendation_section(session_id, section_id):
@@ -667,8 +576,7 @@ def update_recommendation_section(session_id, section_id):
         data["recommendation"][section_id] = content
         
         # Save updated data
-        with open(data_path, 'w') as f:
-            json.dump(data, f, default=str)
+        save_to_json_file(data, data_path)
         
         return jsonify({
             "status": "success",
@@ -681,7 +589,6 @@ def update_recommendation_section(session_id, section_id):
             "status": "error",
             "message": f"Error updating recommendation section: {str(e)}"
         }), 500
-
 
 @app.route('/api/export/<session_id>', methods=['GET'])
 def export_narrative(session_id):
@@ -744,7 +651,6 @@ def export_narrative(session_id):
             "status": "error",
             "message": f"Error exporting narrative: {str(e)}"
         }), 500
-
 
 @app.route('/api/export-recommendation/<session_id>', methods=['GET'])
 def export_recommendation(session_id):
@@ -813,7 +719,6 @@ def export_recommendation(session_id):
                 recommendation_text += recommendation[section_id] + "\n\n"
         
         # Create a temporary file for export
-        import tempfile
         with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as tmp:
             case_number = case_data.get("case_number", "unknown")
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -848,24 +753,6 @@ def export_recommendation(session_id):
             "status": "error",
             "message": f"Error exporting recommendation: {str(e)}"
         }), 500
-
-@app.route('/api/cases', methods=['GET'])
-def get_available_case_list():
-    """Get list of available cases for UI dropdown"""
-    try:
-        from backend.data.case_repository import get_available_cases
-        cases = get_available_cases()
-        return jsonify({
-            "status": "success",
-            "cases": cases
-        }), 200
-    except Exception as e:
-        logger.error(f"Error retrieving available cases: {str(e)}")
-        return jsonify({
-            "status": "error",
-            "message": f"Error retrieving available cases: {str(e)}"
-        }), 500
-
 
 def split_narrative_into_sections(narrative):
     """
@@ -932,7 +819,6 @@ def split_narrative_into_sections(narrative):
     
     return sections
 
-
 def rebuild_narrative(sections):
     """
     Rebuild the full narrative from sections
@@ -954,7 +840,6 @@ def rebuild_narrative(sections):
     ]
     
     return "\n\n".join([section for section in ordered_sections if section])
-
 
 if __name__ == '__main__':
     # Check which variables exist in config for host and port

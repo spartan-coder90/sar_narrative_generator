@@ -1,10 +1,11 @@
 """
-Data validator for validating extracted data with relaxed validation for development
+Data validator for validating case and transaction data
+with relaxed validation for development
 """
 from typing import Dict, List, Any, Optional, Tuple
 import re
 from datetime import datetime
-from backend.utils.sar_extraction_utils import extract_case_number, extract_subjects
+
 from backend.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -18,7 +19,7 @@ class DataValidator:
         
         Args:
             case_data: Extracted case document data
-            excel_data: Extracted Excel data
+            excel_data: Extracted transaction data (in excel-compatible format)
         """
         self.case_data = case_data
         self.excel_data = excel_data
@@ -125,59 +126,62 @@ class DataValidator:
         
         # Try to extract from full_data if empty
         if not subjects and self.case_data.get("full_data", []):
+            # Check for Hogan Search section first (new format)
             for section in self.case_data["full_data"]:
-                if section.get("section") == "Customer Information":
-                    if "US Bank Customer Information" in section:
+                if "Hogan Search" in section:
+                    hogan_subjects = section.get("Hogan Search", [])
+                    if hogan_subjects:
                         subjects = []
-                        for customer in section["US Bank Customer Information"]:
+                        for hogan_subject in hogan_subjects:
                             subject = {
-                                "name": customer.get("Primary Party", ""),
-                                "is_primary": True,  # First customer is primary
-                                "party_key": customer.get("Party Key", ""),
-                                "occupation": customer.get("Occupation Description", ""),
-                                "employer": customer.get("Employer", ""),
-                                "nationality": customer.get("Country of Nationality", ""),
+                                "name": hogan_subject.get("Case Subject", ""),
+                                "is_primary": True,  # First subject is primary
+                                "party_key": str(hogan_subject.get("Primary Party Key", "")),
+                                "occupation": "",
+                                "employer": "",
+                                "nationality": "",
                                 "address": "",
                                 "account_relationship": ""
                             }
-                            
-                            # Extract first address if available
-                            if "Addresses" in customer and customer["Addresses"]:
-                                addresses = customer["Addresses"]
-                                if isinstance(addresses, list) and addresses:
-                                    subject["address"] = addresses[0]
-                            
                             subjects.append(subject)
-                            if len(subjects) == 1:  # Only first is primary
-                                break
+                            # Only first subject is primary
+                            if len(subjects) > 1:
+                                subjects[-1]["is_primary"] = False
                         
                         self.case_data["subjects"] = subjects
-                    elif "customerInformation" in section and "US Bank Customers" in section["customerInformation"]:
-                        subjects = []
-                        for customer in section["customerInformation"]["US Bank Customers"]:
-                            subject = {
-                                "name": customer.get("Name", ""),
-                                "is_primary": True,  # First customer is primary
-                                "party_key": customer.get("Party Key", ""),
-                                "occupation": customer.get("Occupation Description", ""),
-                                "employer": customer.get("Employer", ""),
-                                "nationality": customer.get("Nationality", ""),
-                                "address": "",
-                                "account_relationship": ""
-                            }
+                        break
+            
+            # If not found in Hogan Search, try Customer Information
+            if not subjects:
+                for section in self.case_data["full_data"]:
+                    if section.get("section") == "Customer Information":
+                        if "US Bank Customer Information" in section:
+                            subjects = []
+                            for customer in section["US Bank Customer Information"]:
+                                subject = {
+                                    "name": customer.get("Primary Party", ""),
+                                    "is_primary": True,  # First customer is primary
+                                    "party_key": customer.get("Party Key", ""),
+                                    "occupation": customer.get("Occupation Description", ""),
+                                    "employer": customer.get("Employer", ""),
+                                    "nationality": customer.get("Country of Nationality", ""),
+                                    "address": "",
+                                    "account_relationship": ""
+                                }
+                                
+                                # Extract first address if available
+                                if "Addresses" in customer and customer["Addresses"]:
+                                    addresses = customer["Addresses"]
+                                    if isinstance(addresses, list) and addresses:
+                                        subject["address"] = addresses[0]
+                                
+                                subjects.append(subject)
+                                # Only first subject is primary
+                                if len(subjects) > 1:
+                                    subjects[-1]["is_primary"] = False
                             
-                            # Extract first address if available
-                            if "Addresses" in customer and customer["Addresses"]:
-                                addresses = customer["Addresses"]
-                                if isinstance(addresses, list) and addresses:
-                                    subject["address"] = addresses[0]
-                            
-                            subjects.append(subject)
-                            if len(subjects) == 1:  # Only first is primary
-                                break
-                        
-                        self.case_data["subjects"] = subjects
-                    break
+                            self.case_data["subjects"] = subjects
+                            break
         
         if not subjects:
             # Create default subject if missing
@@ -297,6 +301,45 @@ class DataValidator:
         
         return True
     
+    def validate_transaction_data(self) -> bool:
+        """
+        Validate transaction data with relaxed requirements
+        
+        Returns:
+            bool: True if valid, False otherwise
+        """
+        # Check if we have any transaction data in excel_data
+        transaction_summary = self.excel_data.get("transaction_summary", {})
+        if not transaction_summary:
+            self.warnings.append("Transaction summary is missing")
+            self.excel_data["transaction_summary"] = {
+                "total_credits": 0,
+                "total_debits": 0,
+                "credit_breakdown": [],
+                "debit_breakdown": []
+            }
+        
+        # Check if we have activity summary
+        activity_summary = self.excel_data.get("activity_summary", {})
+        if not activity_summary:
+            self.warnings.append("Activity summary is missing")
+            self.excel_data["activity_summary"] = {
+                "start_date": "",
+                "end_date": "",
+                "total_amount": 0
+            }
+        
+        # Check if we have unusual activity
+        unusual_activity = self.excel_data.get("unusual_activity", {})
+        if not unusual_activity:
+            self.warnings.append("Unusual activity is missing")
+            self.excel_data["unusual_activity"] = {
+                "transactions": []
+            }
+        
+        # Always valid with relaxed requirements
+        return True
+    
     def validate_activity_summary(self) -> bool:
         """
         Validate activity summary with relaxed requirements
@@ -354,16 +397,23 @@ class DataValidator:
                 elif alert_review_period and alert_review_period.get("start"):
                     activity_summary["start_date"] = alert_review_period.get("start")
                 else:
-                    # Get from full_data
+                    # Get from full_data - try Scope of Review first
                     full_data = self.case_data.get("full_data", [])
                     for section in full_data:
-                        if section.get("section") == "Account Information":
-                            review_period_str = section.get("Case Review Period", "")
-                            if review_period_str and " - " in review_period_str:
-                                dates = review_period_str.split(" - ")
-                                if len(dates) == 2:
-                                    activity_summary["start_date"] = dates[0]
-                                    break
+                        if section.get("section") == "Scope of Review":
+                            activity_summary["start_date"] = section.get("Start Date", "")
+                            break
+                    
+                    if not activity_summary.get("start_date"):
+                        # Try Account Information section next
+                        for section in full_data:
+                            if section.get("section") == "Account Information":
+                                review_period_str = section.get("Case Review Period", "")
+                                if review_period_str and " - " in review_period_str:
+                                    dates = review_period_str.split(" - ")
+                                    if len(dates) == 2:
+                                        activity_summary["start_date"] = dates[0]
+                                        break
                     
                     if not activity_summary.get("start_date"):
                         activity_summary["start_date"] = "01/01/2023"  # Default fallback
@@ -376,16 +426,23 @@ class DataValidator:
                 elif alert_review_period and alert_review_period.get("end"):
                     activity_summary["end_date"] = alert_review_period.get("end")
                 else:
-                    # Get from full_data
+                    # Get from full_data - try Scope of Review first
                     full_data = self.case_data.get("full_data", [])
                     for section in full_data:
-                        if section.get("section") == "Account Information":
-                            review_period_str = section.get("Case Review Period", "")
-                            if review_period_str and " - " in review_period_str:
-                                dates = review_period_str.split(" - ")
-                                if len(dates) == 2:
-                                    activity_summary["end_date"] = dates[1]
-                                    break
+                        if section.get("section") == "Scope of Review":
+                            activity_summary["end_date"] = section.get("End Date", "")
+                            break
+                    
+                    if not activity_summary.get("end_date"):
+                        # Try Account Information section next
+                        for section in full_data:
+                            if section.get("section") == "Account Information":
+                                review_period_str = section.get("Case Review Period", "")
+                                if review_period_str and " - " in review_period_str:
+                                    dates = review_period_str.split(" - ")
+                                    if len(dates) == 2:
+                                        activity_summary["end_date"] = dates[1]
+                                        break
                     
                     if not activity_summary.get("end_date"):
                         # Use current date as default end date
@@ -430,9 +487,26 @@ class DataValidator:
         if not samples:
             self.warnings.append("No unusual activity samples found")
             
-            # Try to derive samples from transaction_summary
+            # Try to get from full_data if available
+            full_data = self.case_data.get("full_data", [])
+            for section in full_data:
+                if "Unusual Activity" in section:
+                    unusual_activity_samples = section.get("Unusual Activity", [])
+                    if unusual_activity_samples:
+                        unusual_activity["transactions"] = []
+                        for sample in unusual_activity_samples:
+                            unusual_activity["transactions"].append({
+                                "date": sample.get("Transaction Date", ""),
+                                "amount": sample.get("Transaction Amount", 0),
+                                "type": sample.get("Custom Language", ""),
+                                "description": sample.get("Memo", ""),
+                                "account": str(sample.get("Account", ""))
+                            })
+                        break
+            
+            # If still no samples, try to derive from transaction_summary
             transaction_summary = self.excel_data.get("transaction_summary", {})
-            if transaction_summary:
+            if not unusual_activity["transactions"] and transaction_summary:
                 # Get up to 3 transaction examples from credit_breakdown or debit_breakdown
                 for breakdown_type in ["credit_breakdown", "debit_breakdown"]:
                     breakdown = transaction_summary.get(breakdown_type, [])
@@ -443,12 +517,23 @@ class DataValidator:
                             
                             # Create a sample transaction
                             sample = {
-                                "date": unusual_activity.get("summary", {}).get("date_range", {}).get("start", "01/01/2023"),
+                                "date": self.excel_data.get("activity_summary", {}).get("start_date", "01/01/2023"),
                                 "amount": txn_amount / item.get("count", 1) if item.get("count", 0) > 0 else txn_amount,
                                 "type": txn_type,
                                 "description": f"Sample {txn_type} transaction"
                             }
                             unusual_activity["transactions"].append(sample)
+            
+            # Set summary for unusual activity
+            activity_summary = self.excel_data.get("activity_summary", {})
+            if activity_summary:
+                unusual_activity["summary"] = {
+                    "total_amount": activity_summary.get("total_amount", 0),
+                    "date_range": {
+                        "start": activity_summary.get("start_date", ""),
+                        "end": activity_summary.get("end_date", "")
+                    }
+                }
         
         # Update excel data
         self.excel_data["unusual_activity"] = unusual_activity
@@ -472,6 +557,7 @@ class DataValidator:
         self.validate_alert_info()
         self.validate_subjects()
         self.validate_account_info()
+        self.validate_transaction_data()
         self.validate_activity_summary()
         self.validate_unusual_activity()
         

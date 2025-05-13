@@ -1,14 +1,14 @@
-# backend/data/case_repository.py
-"""
-Repository for static case data used in POC
-"""
 """
 Repository for case data loaded from JSON files at runtime.
-Preserves the full structure while providing compatibility with existing application.
+Integrates transaction data for use in the SAR narrative generation.
 """
 import json
 import os
 from typing import Dict, List, Any, Optional
+import logging
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 # Global cases dictionary - will be populated on first access
 # This will store the full, original JSON structure
@@ -45,7 +45,7 @@ def _initialize_cases():
     
     # If still not found, use fallback data
     if not json_path:
-        print("Warning: Case data JSON file not found. Using fallback data.")
+        logger.warning("Case data JSON file not found. Using fallback data.")
         CASES_FULL = _get_fallback_cases()
         return
     
@@ -54,21 +54,30 @@ def _initialize_cases():
         with open(json_path, 'r', encoding='utf-8') as f:
             raw_data = json.load(f)
         
+        # Check if data is in expected format (list of case section arrays)
+        if not isinstance(raw_data, list):
+            logger.warning(f"Unexpected data format in {json_path}. Expected list of cases.")
+            CASES_FULL = _get_fallback_cases()
+            return
+            
         # Organize by case number
-        for case_sections in raw_data:
-            # Extract case number from the case information section
+        for case_array in raw_data:
+            if not isinstance(case_array, list):
+                continue
+                
+            # Find the case information section to get the case number
             case_number = None
-            for section in case_sections:
-                if section.get("section") == "Case Information":
+            for section in case_array:
+                if isinstance(section, dict) and section.get("section") == "Case Information":
                     case_number = section.get("Case Number")
                     break
             
             if case_number:
-                CASES_FULL[case_number] = case_sections
+                CASES_FULL[case_number] = case_array
                 
-        print(f"Successfully loaded {len(CASES_FULL)} cases from {json_path}")
+        logger.info(f"Successfully loaded {len(CASES_FULL)} cases from {json_path}")
     except Exception as e:
-        print(f"Error loading cases from JSON: {str(e)}")
+        logger.error(f"Error loading cases from JSON: {str(e)}")
         CASES_FULL = _get_fallback_cases()
 
 def _get_fallback_cases() -> Dict[str, List[Dict[str, Any]]]:
@@ -94,7 +103,7 @@ def _get_fallback_cases() -> Dict[str, List[Dict[str, Any]]]:
                         "Alert ID": "AMLR5881633",
                         "Alert Month": "201902",
                         "Description": "Number of Transactions: 2; High Risk Country; Accounts Involved: 4037670331863968; High-Risk Flag:0; Score=2",
-                        "Review Period": "02/01/20 - 01/31/2024"
+                        "Review Period": "02/01/2023 - 01/31/2024"
                     }
                 ]
             },
@@ -115,7 +124,7 @@ def _get_fallback_cases() -> Dict[str, List[Dict[str, Any]]]:
             },
             {
                 "section": "Account Information",
-                "Case Review Period": "01/01/2017 - 03/18/2024",
+                "Case Review Period": "01/01/2023 - 03/18/2024",
                 "Accounts": [
                     {
                         "Account Key": "ICS9999988",
@@ -125,6 +134,43 @@ def _get_fallback_cases() -> Dict[str, List[Dict[str, Any]]]:
                         "Status Description": "I50 (GOOD ACCOUNT)",
                         "Related Parties": [
                             "GLENN A BROWDER (First Co-Owner)"
+                        ]
+                    }
+                ]
+            },
+            {
+                "section": "Scope of Review",
+                "Start Date": "01/01/2023",
+                "End Date": "03/18/2024"
+            },
+            {
+                "section": "Activity Summary",
+                "Activity Summary": [
+                    {
+                        "Account": "204784659052",
+                        "Credits": [
+                            {
+                                "Custom Language": "Cash Deposit",
+                                "% of Credits": 55.2,
+                                "Total ": 27600.00,
+                                "# Transactions ": 3,
+                                "Min Credit Amt.": 8900.00,
+                                "Max Credit Amt.": 9500.00,
+                                "Min Txn Date ": "02/15/2023",
+                                "Max Txn Date ": "02/17/2023"
+                            }
+                        ],
+                        "Debits": [
+                            {
+                                "Custom Language": "Wire Transfer",
+                                "% of Debits": 52.08,
+                                "Total ": 25000.00,
+                                "# Transactions ": 1,
+                                "Min Debit Amt.": 25000.00,
+                                "Max Debit Amt.": 25000.00,
+                                "Min Txn Date ": "02/18/2023",
+                                "Max Txn Date ": "02/18/2023"
+                            }
                         ]
                     }
                 ]
@@ -184,7 +230,7 @@ def get_case(case_number: str) -> Optional[Dict[str, Any]]:
                 
                 # Extract review period dates if available
                 review_period = alert.get("Review Period", "")
-                if review_period:
+                if review_period and " - " in review_period:
                     dates = review_period.split(" - ")
                     if len(dates) == 2:
                         alert_info["review_period"]["start"] = dates[0]
@@ -279,6 +325,82 @@ def get_case(case_number: str) -> Optional[Dict[str, Any]]:
                 # Set first account as primary account_info
                 if flattened_data["accounts"]:
                     flattened_data["account_info"] = flattened_data["accounts"][0]
+        
+        elif section_type == "Prior Cases/SARs":
+            # Extract prior cases information
+            prior_cases = section.get("priorCases", [])
+            for prior_case in prior_cases:
+                case_data = {
+                    "case_number": prior_case.get("Case Number", ""),
+                    "alert_id": [],
+                    "alert_month": [],
+                    "review_period": {"start": "", "end": ""},
+                    "sar_form_number": "",
+                    "filing_date": "",
+                    "summary": ""
+                }
+                
+                # Extract alert information
+                if "Alerting Information" in prior_case:
+                    alert_info = prior_case["Alerting Information"]
+                    case_data["alert_id"] = alert_info.get("Alert IDs", [])
+                    case_data["alert_month"] = alert_info.get("Alert Months", [])
+                
+                # Extract review period
+                if "Scope of Review" in prior_case:
+                    review_period = prior_case["Scope of Review"]
+                    case_data["review_period"]["start"] = review_period.get("start", "")
+                    case_data["review_period"]["end"] = review_period.get("end", "")
+                
+                # Extract SAR details
+                if "SAR Details" in prior_case:
+                    sar_details = prior_case["SAR Details"]
+                    case_data["sar_form_number"] = sar_details.get("Form Number", "")
+                    case_data["filing_date"] = sar_details.get("Filing Date", "")
+                    case_data["summary"] = sar_details.get("SAR Summary", "")
+                
+                flattened_data["prior_cases"].append(case_data)
+        
+        elif section_type == "Database Searches":
+            # Extract database searches
+            database_searches = {
+                "kyc": {"results": ""},
+                "adverse_media": {"results": ""},
+                "risk_ratings": []
+            }
+            
+            # Process KYC database results
+            if "KYC Database" in section:
+                kyc_results = []
+                for entry in section["KYC Database"]:
+                    subject_name = entry.get("Subject Name", "")
+                    if "WebKYC Form Link" in entry:
+                        kyc_results.append(f"{subject_name}: {entry.get('WebKYC Form Link', '')}")
+                    else:
+                        kyc_results.append(f"{subject_name}: No WebKYC form links found")
+                
+                database_searches["kyc"]["results"] = "\n".join(kyc_results) if kyc_results else "No WebKYC form links found"
+            
+            # Process risk ratings
+            if "Risk Ratings" in section:
+                for rating in section["Risk Ratings"]:
+                    database_searches["risk_ratings"].append({
+                        "name": rating.get("Subject Name", ""),
+                        "party_key": rating.get("Party Key", ""),
+                        "sor": rating.get("SOR", ""),
+                        "rating": rating.get("Party Risk Rating Code Description", "")
+                    })
+            
+            # Process adverse media
+            if "Adverse Media Review" in section:
+                database_searches["adverse_media"]["results"] = section["Adverse Media Review"]
+            
+            flattened_data["database_searches"] = database_searches
+        
+        elif section_type == "Scope of Review":
+            # Extract start and end dates
+            flattened_data["review_period"]["start"] = section.get("Start Date", "")
+            flattened_data["review_period"]["end"] = section.get("End Date", "")
     
     return flattened_data
 
@@ -388,19 +510,27 @@ def load_cases_from_file(file_path: str) -> bool:
         # Clear existing data
         CASES_FULL = {}
         
+        # Check if data is in expected format (list of case section arrays)
+        if not isinstance(raw_data, list):
+            logger.warning(f"Unexpected data format in {file_path}. Expected list of cases.")
+            return False
+        
         # Organize by case number
-        for case_sections in raw_data:
-            # Extract case number from the case information section
+        for case_array in raw_data:
+            if not isinstance(case_array, list):
+                continue
+                
+            # Find the case information section to get the case number
             case_number = None
-            for section in case_sections:
-                if section.get("section") == "Case Information":
+            for section in case_array:
+                if isinstance(section, dict) and section.get("section") == "Case Information":
                     case_number = section.get("Case Number")
                     break
             
             if case_number:
-                CASES_FULL[case_number] = case_sections
+                CASES_FULL[case_number] = case_array
         
         return len(CASES_FULL) > 0
     except Exception as e:
-        print(f"Error loading cases from {file_path}: {str(e)}")
+        logger.error(f"Error loading cases from {file_path}: {str(e)}")
         return False

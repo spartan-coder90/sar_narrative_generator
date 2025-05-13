@@ -5,7 +5,13 @@ import { Save, Eye, ArrowLeft, CheckCircle, ArrowClockwise } from 'react-bootstr
 import ApiService from '../services/api';
 import SectionEditor from '../components/SectionEditor';
 import AlertingActivityEditor from '../components/AlertingActivityEditor';
-import { NarrativeSections, Recommendation, AlertingActivityData } from '../types';
+import { 
+  NarrativeSections, 
+  Recommendation, 
+  AlertingActivityData, 
+  NARRATIVE_SECTION_IDS, 
+  NARRATIVE_SECTION_TITLES 
+} from '../types';
 
 const EditPage: React.FC = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -13,7 +19,7 @@ const EditPage: React.FC = () => {
   
   const [sections, setSections] = useState<NarrativeSections>({});
   const [recommendation, setRecommendation] = useState<Record<string, string>>({});
-  const [activeTab, setActiveTab] = useState<string>('introduction');
+  const [activeTab, setActiveTab] = useState<string>(NARRATIVE_SECTION_IDS.SUSPICIOUS_ACTIVITY_SUMMARY);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [isRegenerating, setIsRegenerating] = useState<boolean>(false);
@@ -72,14 +78,27 @@ const EditPage: React.FC = () => {
           
           // Set first section as active by default
           if (response.sections && Object.keys(response.sections).length > 0) {
-            const firstSectionId = Object.keys(response.sections)[0];
-            setActiveTab(firstSectionId);
-            setActiveSection({
-              id: firstSectionId,
-              content: response.sections[firstSectionId].content,
-              title: response.sections[firstSectionId].title,
-              isRecommendation: false
-            });
+            // Use the first required section as default
+            const firstSectionId = NARRATIVE_SECTION_IDS.SUSPICIOUS_ACTIVITY_SUMMARY;
+            if (response.sections[firstSectionId]) {
+              setActiveTab(firstSectionId);
+              setActiveSection({
+                id: firstSectionId,
+                content: response.sections[firstSectionId].content,
+                title: response.sections[firstSectionId].title,
+                isRecommendation: false
+              });
+            } else {
+              // Fallback to the first available section
+              const firstAvailableId = Object.keys(response.sections)[0];
+              setActiveTab(firstAvailableId);
+              setActiveSection({
+                id: firstAvailableId,
+                content: response.sections[firstAvailableId].content,
+                title: response.sections[firstAvailableId].title,
+                isRecommendation: false
+              });
+            }
           } else if (response.recommendation && Object.keys(response.recommendation).length > 0) {
             const firstRecSectionId = Object.keys(response.recommendation)[0];
             setActiveTab(firstRecSectionId);
@@ -346,15 +365,13 @@ const EditPage: React.FC = () => {
       
       return recommendationHelpText[sectionId] || "";
     } else {
-      // Help text for narrative sections
+      // Help text for narrative sections based on new requirements
       const narrativeHelpText: Record<string, string> = {
-        "introduction": "Introduce the SAR filing with activity type, amount, subject name, account details, and date range.",
-        "prior_cases": "Include information about any prior SARs filed on this account or subject.",
-        "account_info": "Provide details about the account including type, open date, and status.",
-        "subject_info": "Include information about the subject including occupation and relationship to the account.",
-        "activity_summary": "Summarize the suspicious activity including transaction patterns and AML risks.",
-        "transaction_samples": "Provide specific examples of suspicious transactions with dates and amounts.",
-        "conclusion": "Summarize the SAR filing with total amounts, date ranges, and reference number."
+        [NARRATIVE_SECTION_IDS.SUSPICIOUS_ACTIVITY_SUMMARY]: "Summary of unusual activity including transaction types, totals, dates, and AML indicators.",
+        [NARRATIVE_SECTION_IDS.PRIOR_CASES]: "Summarize any relevant prior cases or SARs including case/SAR numbers, review periods, and filing details.",
+        [NARRATIVE_SECTION_IDS.ACCOUNT_SUBJECT_INFO]: "Summary of account details and account holders. Include foreign nationalities and IDs if applicable.",
+        [NARRATIVE_SECTION_IDS.SUSPICIOUS_ACTIVITY_ANALYSIS]: "Detailed analysis of unusual activity identified in transaction data including AML risk indicators.",
+        [NARRATIVE_SECTION_IDS.CONCLUSION]: "Conclusion statement with contact information for supporting documentation."
       };
       
       return narrativeHelpText[sectionId] || "";
@@ -492,17 +509,42 @@ const EditPage: React.FC = () => {
                 </Button>
                 
                 <div className="list-group-item bg-light fw-bold">SAR Narrative</div>
-                {Object.entries(sections).map(([sectionId, section]) => (
-                  <Button
-                    key={sectionId}
-                    variant="link"
-                    className={`list-group-item list-group-item-action d-flex justify-content-between align-items-center ps-4 ${activeTab === sectionId ? 'active' : ''}`}
-                    onClick={() => handleTabChange(sectionId)}
-                  >
-                    {section.title}
-                    {!section.content.trim() ? <Badge bg="warning" pill>Empty</Badge> : null}
-                  </Button>
+                {/* Display SAR Narrative Sections in the required order */}
+                {[
+                  NARRATIVE_SECTION_IDS.SUSPICIOUS_ACTIVITY_SUMMARY,
+                  NARRATIVE_SECTION_IDS.PRIOR_CASES,
+                  NARRATIVE_SECTION_IDS.ACCOUNT_SUBJECT_INFO,
+                  NARRATIVE_SECTION_IDS.SUSPICIOUS_ACTIVITY_ANALYSIS,
+                  NARRATIVE_SECTION_IDS.CONCLUSION
+                ].map(sectionId => (
+                  sections[sectionId] && (
+                    <Button
+                      key={sectionId}
+                      variant="link"
+                      className={`list-group-item list-group-item-action d-flex justify-content-between align-items-center ps-4 ${activeTab === sectionId ? 'active' : ''}`}
+                      onClick={() => handleTabChange(sectionId)}
+                    >
+                      {sections[sectionId].title}
+                      {!sections[sectionId].content.trim() ? <Badge bg="warning" pill>Empty</Badge> : null}
+                    </Button>
+                  )
                 ))}
+                
+                {/* Show any other sections that might exist */}
+                {Object.entries(sections)
+                  .filter(([id]) => !Object.values(NARRATIVE_SECTION_IDS).includes(id))
+                  .map(([sectionId, section]) => (
+                    <Button
+                      key={sectionId}
+                      variant="link"
+                      className={`list-group-item list-group-item-action d-flex justify-content-between align-items-center ps-4 ${activeTab === sectionId ? 'active' : ''}`}
+                      onClick={() => handleTabChange(sectionId)}
+                    >
+                      {section.title}
+                      {!section.content.trim() ? <Badge bg="warning" pill>Empty</Badge> : null}
+                    </Button>
+                  ))
+                }
               </div>
             </Card.Body>
           </Card>

@@ -1,160 +1,129 @@
-# Modified llm_client.py without PII protection
-
 import logging
-from typing import Dict, List, Any, Optional, Tuple
-import json
+import os
+from typing import Dict, Any, Optional
 
 from backend.utils.logger import get_logger
 import backend.config as config
 
 # Langchain imports
-from langchain.chat_models import ChatOpenAI, AzureChatOpenAI
-from langchain.llms import Ollama
+from langchain_community.chat_models import ChatOpenAI, AzureChatOpenAI
+from langchain_ollama import OllamaLLM
+
 from langchain.schema import HumanMessage, SystemMessage
 from langchain.callbacks.base import BaseCallbackHandler
 
-logger = get_logger(__name__)
 
-class LLMCallbackHandler(BaseCallbackHandler):
-    """Callback handler for langchain to log LLM calls"""
-    
-    def on_llm_start(self, serialized: Dict[str, Any], prompts: List[str], **kwargs) -> None:
-        logger.debug(f"LLM started with prompts: {len(prompts)}")
-    
-    def on_llm_end(self, response, **kwargs) -> None:
-        logger.debug("LLM call completed")
-    
-    def on_llm_error(self, error: Exception, **kwargs) -> None:
-        logger.error(f"LLM call failed: {str(error)}")
+def get_llm_callback_handler() -> BaseCallbackHandler:
+    # Your implementation of a callback handler, if any
+    return None
+
 
 class LLMClient:
-    """Client for interacting with language models"""
-    
-    def __init__(self, model: str = None, api_key: Optional[str] = None, endpoint: Optional[str] = None):
+    def __init__(
+        self,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+        endpoint: Optional[str] = None,
+    ):
         """
-        Initialize the LLM client with configurable model
-        
+        Initialize your LLM client (ChatOpenAI, AzureChatOpenAI, OllamaLLM)
+
         Args:
-            model: LLM model identifier ('llama3-8b', 'gpt-3.5-turbo', 'gpt-4', 'openwebui', etc.)
+            model: Which model to load (e.g., "gpt-4", "llama3-8b")
             api_key: API key for the model
             endpoint: API endpoint for the model
         """
+        logger = get_logger(__name__)
+
         self.model = model or config.DEFAULT_LLM_MODEL
-        self.api_key = api_key or self._get_api_key_for_model(self.model)
-        self.endpoint = endpoint or self._get_endpoint_for_model(self.model)
-        self.callback_handler = LLMCallbackHandler()
-        
+        # Use provided api_key or fallback to environment variable
+        self.api_key = api_key or os.getenv('OPENAI_API_KEY', '')
+        # Use provided endpoint or fallback to environment variable
+        self.endpoint = endpoint or os.getenv('OPENAI_API_BASE', '')
+        self.callback_handler = get_llm_callback_handler()
+
         # Initialize the langchain client based on model type
         self.llm_client = self._initialize_llm_client()
-        
+
         logger.info(f"Initialized LLM client with model: {self.model}")
-    
-    def _get_api_key_for_model(self, model: str) -> str:
-        """Get appropriate API key based on selected model"""
-        if model.startswith('gpt'):
-            return config.AZURE_OPENAI_API_KEY
-        elif model in ['openwebui', 'openai-compatible']:
-            return config.OPENWEBUI_API_KEY
-        else:
-            return config.LLAMA_API_KEY or ""
-    
-    def _get_endpoint_for_model(self, model: str) -> str:
-        """Get appropriate endpoint based on selected model"""
-        if model.startswith('gpt'):
-            return config.AZURE_OPENAI_ENDPOINT
-        elif model in ['openwebui', 'openai-compatible']:
-            return config.OPENWEBUI_API_ENDPOINT
-        else:
-            return config.LLAMA_API_ENDPOINT
-    
+
     def _initialize_llm_client(self):
-        """Initialize the appropriate langchain client based on model"""
-        try:
-            if self.model.startswith('gpt'):
-                # Azure OpenAI
-                return AzureChatOpenAI(
-                    azure_endpoint=self.endpoint,
-                    api_key=self.api_key,
-                    api_version="2023-05-15",
-                    deployment_name=self.model.replace('gpt-3.5-turbo', 'gpt-35-turbo'),
-                    temperature=0.2,
-                    max_tokens=1000,
-                    callbacks=[self.callback_handler]
-                )
-            elif self.model in ['openwebui', 'openai-compatible']:
-                # OpenWebUI or OpenAI-compatible API
-                from langchain.llms import OpenAI
-                return OpenAI(
-                    openai_api_base=self.endpoint,
-                    openai_api_key=self.api_key,
-                    model_name="gpt-3.5-turbo",  # Default model for OpenWebUI
-                    temperature=0.2,
-                    max_tokens=1000,
-                    callbacks=[self.callback_handler]
-                )
-            else:
-                # Ollama (local or remote)
-                return Ollama(
-                    base_url=self.endpoint,
-                    model="llama3:8b",
-                    temperature=0.2,
-                    num_predict=1000,
-                    callbacks=[self.callback_handler]
-                )
-        except Exception as e:
-            logger.error(f"Failed to initialize LLM client: {str(e)}")
-            raise
-    
-    def generate_content(self, prompt: str, max_tokens: int = 1000, temperature: float = 0.2) -> str:
         """
-        Generate content without PII protection
-        
+        Instantiates ChatOpenAI, AzureChatOpenAI, or OllamaLLM based on model.
+        """
+        if self.model.startswith("llama"):
+            return OllamaLLM(
+                model=self.model,
+                api_key=self.api_key,
+                endpoint=self.endpoint,
+                callback_handler=self.callback_handler,
+            )
+        elif self.endpoint.startswith("https://azure"):  # adjust detection logic as needed
+            return AzureChatOpenAI(
+                engine=self.model,
+                openai_api_key=self.api_key,
+                openai_api_base=self.endpoint,
+                callback_handler=self.callback_handler,
+            )
+        else:
+            return ChatOpenAI(
+                model_name=self.model,
+                openai_api_key=self.api_key,
+                request_timeout=getattr(config, 'LLM_TIMEOUT_SECONDS', 60),
+                callback_handler=self.callback_handler,
+            )
+
+    def generate_content(
+        self,
+        prompt: str,
+        max_tokens: int = 1000,
+        temperature: float = 0.2,
+    ) -> str:
+        """
+        Generate content for SAR narratives.
+
         Args:
             prompt: The prompt to send to the LLM
             max_tokens: Maximum tokens in the response
             temperature: Temperature setting
-            
+
         Returns:
             str: Generated text
         """
+        logger = get_logger(__name__)
         try:
-            # Create system message with instructions
+            # Build system & human messages for chat models
             system_message = (
                 "You are an expert in generating SAR (Suspicious Activity Report) documentation."
             )
-            
-            # Create messages for chat models
             messages = [
                 SystemMessage(content=system_message),
-                HumanMessage(content=prompt)
+                HumanMessage(content=prompt),
             ]
-            
-            # Update client settings for this call
+
+            # Configure generation parameters
             if hasattr(self.llm_client, 'temperature'):
                 self.llm_client.temperature = temperature
             if hasattr(self.llm_client, 'max_tokens'):
                 self.llm_client.max_tokens = max_tokens
-            elif hasattr(self.llm_client, 'num_predict'):
+            if hasattr(self.llm_client, 'num_predict'):
                 self.llm_client.num_predict = max_tokens
-            
+
             # Generate response
-            if hasattr(self.llm_client, 'predict_messages'):
-                # Chat model
-                response = self.llm_client.predict_messages(messages)
-                if hasattr(response, 'content'):
-                    response_text = response.content
-                else:
-                    response_text = str(response)
+            if hasattr(self.llm_client, 'invoke'):
+                # Chat-style LLM (ChatOpenAI, AzureChatOpenAI, OllamaLLM, etc.)
+                result = self.llm_client.invoke(messages)
+                response_text = result.content if hasattr(result, 'content') else str(result)
             else:
-                # Completion model
+                # Classic completion LLM that accept a single string prompt
                 response_text = self.llm_client.predict(prompt)
-            
+
             return response_text
-            
+
         except Exception as e:
             logger.error(f"Error generating content: {str(e)}")
-            # Return a fallback response
             return "Error generating content. Please try again."
+
     
     def generate_section(self, section_type: str, data: Dict[str, Any]) -> str:
         """

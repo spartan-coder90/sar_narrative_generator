@@ -110,13 +110,13 @@ def generate_from_case():
             "message": "Case number is required"
         }), 400
     
-    # Get selected model (default to llama3-8b if not specified)
-    selected_model = data.get('model', 'llama3-8b')
+    # Get selected model (default to llama3:8b if not specified)
+    selected_model = data.get('model', 'llama3:8b')
     
     # Validate model selection
-    valid_models = ['llama3-8b', 'gpt-3.5-turbo', 'gpt-4']
+    valid_models = ['llama3:8b', 'gpt-3.5-turbo', 'gpt-4']
     if selected_model not in valid_models:
-        selected_model = 'llama3-8b'  # Default to Llama 3 if invalid
+        selected_model = 'llama3:8b'  # Default to Llama 3 if invalid
     
     # Retrieve case data from repository
     try:
@@ -400,11 +400,11 @@ def get_alerting_activity(session_id):
         
         # Check if transaction data and alerting activity summary exist
         transaction_data = data.get("transaction_data", {})
-        alerting_activity_summary = transaction_data.get("alerting_activity_summary", {})
+        case_data = data.get("case_data", {})
         
+        # Generate alerting activity summary if not available
+        alerting_activity_summary = transaction_data.get("alerting_activity_summary", {})
         if not alerting_activity_summary:
-            # Generate it if not available
-            case_data = data.get("case_data", {})
             transaction_processor = TransactionProcessor(case_data)
             alerting_activity_summary = transaction_processor.calculate_alerting_activity_summary()
             
@@ -415,46 +415,110 @@ def get_alerting_activity(session_id):
             data["transaction_data"]["alerting_activity_summary"] = alerting_activity_summary
             save_to_json_file(data, data_path)
         
+        # Ensure alerting account is populated
+        if not alerting_activity_summary.get("alertInfo", {}).get("alertingAccounts"):
+            account_info = case_data.get("account_info", {})
+            account_type = account_info.get("account_type", "")
+            account_number = account_info.get("account_number", "")
+            
+            if "alertInfo" not in alerting_activity_summary:
+                alerting_activity_summary["alertInfo"] = {}
+                
+            alerting_activity_summary["alertInfo"]["alertingAccounts"] = f"{account_type} {account_number}".strip()
+            
+            # Save updated data
+            data["transaction_data"]["alerting_activity_summary"] = alerting_activity_summary
+            save_to_json_file(data, data_path)
+        
         # Get LLM template for formatting the alerting activity
-        llm_template = """Summarize this bank account alert information directly without any introductory phrases:
+        llm_template = """
+        Summarize this bank account alert information directly without any introductory phrases:
 
-ALERT INFORMATION:
-- Case Number: {case_number}
-- Alerting Account(s): {alerting_accounts}
-- Alerting Month(s): {alerting_months}
-- Alert Description: {alert_description}
+        ALERT INFORMATION:
+        - Case Number: {case_number}
+        - Alerting Account(s): {alerting_accounts}
+        - Alerting Month(s): {alerting_months}
+        - Alert Description: {alert_description}
 
-ACCOUNT: {account_number}
+        ACCOUNT: {account_number}
 
-CREDITS:
-- Total amount: ${credit_amount_total}
-- Number of transactions: {credit_transaction_count}
-- Date range: {credit_min_date} to {credit_max_date}
-- Transaction amounts: ${credit_min_amount} to ${credit_max_amount}
-- Most common activity: {credit_highest_percent_type} ({credit_highest_percent_value}%)
+        CREDITS:
+        - Total amount: ${credit_amount_total}
+        - Number of transactions: {credit_transaction_count}
+        - Date range: {credit_min_date} to {credit_max_date}
+        - Transaction amounts: ${credit_min_amount} to ${credit_max_amount}
+        - Most common activity: {credit_highest_percent_type} ({credit_highest_percent_value}%)
 
-DEBITS:
-- Total amount: ${debit_amount_total}
-- Number of transactions: {debit_transaction_count}
-- Date range: {debit_min_date} to {debit_max_date}
-- Transaction amounts: ${debit_min_amount} to ${debit_max_amount}
-- Most common activity: {debit_highest_percent_type} ({debit_highest_percent_value}%)
+        DEBITS:
+        - Total amount: ${debit_amount_total}
+        - Number of transactions: {debit_transaction_count}
+        - Date range: {debit_min_date} to {debit_max_date}
+        - Transaction amounts: ${debit_min_amount} to ${debit_max_amount}
+        - Most common activity: {debit_highest_percent_type} ({debit_highest_percent_value}%)
 
-Write a clear summary in this exact format:
+        Write a clear summary in this exact format:
 
-1. First paragraph: Start with the Case Number, then describe the alerting accounts, alerting months, and include a brief description of the alert activity.
+        1. First paragraph: Start with the Case Number, then describe the alerting accounts, alerting months, and include a brief description of the alert activity.
 
-2. Second paragraph: Summarize credit activity focusing on total amount, number of transactions, most common type of activity with its percentage, and range of amounts.
+        2. Second paragraph: Summarize credit activity focusing on total amount, number of transactions, most common type of activity with its percentage, and range of amounts.
 
-3. Third paragraph: Summarize debit activity focusing on total amount, number of transactions, most common type of activity with its percentage, and range of amounts.
+        3. Third paragraph: Summarize debit activity focusing on total amount, number of transactions, most common type of activity with its percentage, and range of amounts.
 
-Keep sentences short and simple. Do not use phrases like "Here is the summary" or "In conclusion." Start immediately with the case number and keep the summary factual without analysis beyond what's shown in the data."""
+        Keep sentences short and simple. Do not use phrases like "Here is the summary" or "In conclusion." Start immediately with the case number and keep the summary factual without analysis beyond what's shown in the data.
+        """
         
         # Try to get a generated summary from the recommendation data
         generated_summary = ""
         if "recommendation" in data and "alerting_activity" in data["recommendation"]:
             generated_summary = data["recommendation"]["alerting_activity"]
-            
+        
+        # If no generated summary exists, generate one using LLM
+        if not generated_summary and "llm_client" in globals():
+            try:
+                # Initialize LLM client
+                llm_client = LLMClient()
+                
+                # Format the template with actual data
+                alert_info = alerting_activity_summary.get("alertInfo", {})
+                credit_summary = alerting_activity_summary.get("creditSummary", {})
+                debit_summary = alerting_activity_summary.get("debitSummary", {})
+                
+                formatted_prompt = llm_template.format(
+                    case_number=alert_info.get("caseNumber", ""),
+                    alerting_accounts=alert_info.get("alertingAccounts", ""),
+                    alerting_months=alert_info.get("alertingMonths", ""),
+                    alert_description=alert_info.get("alertDescription", ""),
+                    account_number=alerting_activity_summary.get("account", ""),
+                    credit_amount_total=credit_summary.get("amountTotal", 0),
+                    credit_transaction_count=credit_summary.get("transactionCount", 0),
+                    credit_min_date=credit_summary.get("minTransactionDate", ""),
+                    credit_max_date=credit_summary.get("maxTransactionDate", ""),
+                    credit_min_amount=credit_summary.get("minCreditAmount", 0),
+                    credit_max_amount=credit_summary.get("maxCreditAmount", 0),
+                    credit_highest_percent_type=credit_summary.get("highestPercentType", ""),
+                    credit_highest_percent_value=credit_summary.get("highestPercentValue", 0),
+                    debit_amount_total=debit_summary.get("amountTotal", 0),
+                    debit_transaction_count=debit_summary.get("transactionCount", 0),
+                    debit_min_date=debit_summary.get("minTransactionDate", ""),
+                    debit_max_date=debit_summary.get("maxTransactionDate", ""),
+                    debit_min_amount=debit_summary.get("minDebitAmount", 0),
+                    debit_max_amount=debit_summary.get("maxDebitAmount", 0),
+                    debit_highest_percent_type=debit_summary.get("highestPercentType", ""),
+                    debit_highest_percent_value=debit_summary.get("highestPercentValue", 0)
+                )
+                
+                # Generate the summary
+                generated_summary = llm_client.generate_content(formatted_prompt, max_tokens=800, temperature=0.2)
+                
+                # Update recommendation with generated summary
+                if "recommendation" not in data:
+                    data["recommendation"] = {}
+                
+                data["recommendation"]["alerting_activity"] = generated_summary
+                save_to_json_file(data, data_path)
+            except Exception as e:
+                logger.error(f"Error generating alerting activity summary: {str(e)}")
+        
         # Create the response data
         response_data = {
             "status": "success",

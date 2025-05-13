@@ -22,8 +22,8 @@ const AlertingActivityEditor: React.FC<AlertingActivityEditorProps> = ({
   
   // Update local content when content prop changes
   useEffect(() => {
-    setLocalContent(content);
-  }, [content]);
+    setLocalContent(content || generatedSummary || '');
+  }, [content, generatedSummary]);
   
   // Handle text changes
   const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -61,7 +61,7 @@ const AlertingActivityEditor: React.FC<AlertingActivityEditorProps> = ({
         <Card.Body className="p-3">
           <div className="mb-3">
             <strong>Case Number:</strong> {alertInfo.caseNumber}<br />
-            <strong>Alerting Account(s):</strong> {alertInfo.alertingAccounts}<br />
+            <strong>Alerting Account(s):</strong> {alertInfo.alertingAccounts || account}<br />
             <strong>Alerting Month(s):</strong> {alertInfo.alertingMonths}<br />
             <strong>Alert Description:</strong> {alertInfo.alertDescription}
           </div>

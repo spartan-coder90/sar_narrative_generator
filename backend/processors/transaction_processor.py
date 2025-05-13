@@ -1165,7 +1165,7 @@ class TransactionProcessor:
         account_number = account_info.get("account_number", "")
         
         summary["account"] = account_number
-        summary["alertInfo"]["alertingAccounts"] = f"{account_type} {account_number}"
+        summary["alertInfo"]["alertingAccounts"] = f"{account_type} {account_number}".strip()
         
         # Extract alert months and descriptions
         alert_months = []
@@ -1174,9 +1174,9 @@ class TransactionProcessor:
         for alert in alert_info:
             if isinstance(alert, dict):
                 if alert.get("alert_month"):
-                    alert_months.append(alert.get("alert_month"))
+                    alert_months.append(str(alert.get("alert_month")))
                 if alert.get("description"):
-                    alert_descriptions.append(alert.get("description"))
+                    alert_descriptions.append(str(alert.get("description")))
         
         summary["alertInfo"]["alertingMonths"] = ", ".join(alert_months) if alert_months else ""
         summary["alertInfo"]["alertDescription"] = "; ".join(alert_descriptions) if alert_descriptions else ""

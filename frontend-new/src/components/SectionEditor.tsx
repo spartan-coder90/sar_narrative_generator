@@ -70,13 +70,11 @@ const SectionEditor: React.FC<SectionEditorProps> = ({ section, onChange }) => {
   
   const getTemplateText = (sectionId: string) => {
     const templates: Record<string, string> = {
-      'introduction': 'U.S. Bank National Association (USB), is filing this Suspicious Activity Report (SAR) to report [type of activity] totaling $[amount] by [subject name] in [account type] account number [account number]. The suspicious activity was conducted from [start date] through [end date].',
-      'prior_cases': 'No prior SARs were identified for the subjects or account.',
-      'account_info': '[Account type] account [account number] was opened on [date] and [remains open/was closed on [date]]. The account was [closure reason]. The account closure funds were moved to [destination] on [date].',
-      'subject_info': '[Subject name] is employed as a [occupation] at [employer]. [Subject name] is listed as [relationship] on the account.',
-      'activity_summary': 'The account activity for [account number] from [start date] to [end date] included total credits of $[amount] and total debits of $[amount]. The AML risks associated with these transactions are as follows: [risk indicators].',
-      'transaction_samples': 'A sample of the suspicious transactions includes: [date]: $[amount] ([transaction type]) - [description]; [date]: $[amount] ([transaction type]) - [description].',
-      'conclusion': 'In conclusion, USB is reporting $[amount] in [type of activity] which gave the appearance of suspicious activity and were conducted by [subject name] in account number [account number] from [start date] through [end date]. USB will conduct a follow-up review to monitor for continuing activity. All requests for supporting documentation can be sent to lawenforcementrequestsml@usbank.com referencing AML case number [case number].'
+      'suspicious_activity_summary': 'U.S. Bank National Association (USB), is filing this Suspicious Activity Report (SAR) to report [type of activity] totaling $[amount] by [subject name] in [account type] account number [account number]. The suspicious activity was conducted from [start date] through [end date]. The AML indicators were as follows: [risk indicators]. This SAR contains an attached Comma Separated Value (CSV) file that provides additional details of the suspicious transactions being reported in this SAR.',
+      'prior_cases': 'Case # [case number]: Alerting account # [account number] reviewed from [start date] to [end date] due to [alerting activity]. SAR ID reported account # [account number] for activity totaling $[amount] conducted from [start date] to [end date]. [SAR summary]',
+      'account_subject_info': 'Personal [account type] account [account number] was opened on [date] and [remains open/was closed on [date]]. The account was closed due to [closure reason]. The account closure funds were moved to [destination] on [date] via [method]. The following foreign nationalities and identifications were identified for [subject name]: [nationality], [ID type] # [ID number] issued on [issue date] and expires on [expiration date].',
+      'suspicious_activity_analysis': 'The suspicious activity identified in account [account number] was conducted from [start date] to [end date] and consisted of [transaction types and amounts]. The AML risks associated with these transactions are as follows: [risk indicators].',
+      'conclusion': 'In conclusion, USB will conduct a follow-up review to monitor for continuing activity. All requests for supporting documentation can be sent to lawenforcementrequestaml@usbank.com referencing AML case number [case number].'
     };
     
     return templates[sectionId] || '';

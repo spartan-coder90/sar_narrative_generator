@@ -29,7 +29,7 @@ export const ApiService = {
   },
 
   // Generate SAR narrative from selected case
-  generateNarrativeFromCase: async (caseNumber: string, model: string = 'llama3-8b'): Promise<GenerateResponse> => {
+  generateNarrativeFromCase: async (caseNumber: string, model: string = 'llama3:8b'): Promise<GenerateResponse> => {
     const response = await api.post<GenerateResponse>('/generate-from-case', {
       case_number: caseNumber,
       model: model

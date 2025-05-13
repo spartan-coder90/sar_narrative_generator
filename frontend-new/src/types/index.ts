@@ -1,3 +1,5 @@
+// Updated types.ts to align with requirements document
+
 export interface CaseSummary {
   case_number: string;
   subjects: string[];
@@ -116,7 +118,7 @@ export interface ExcelData {
   inter_account_transfers: any[];
 }
 
-// Section Types
+// Section Types - UPDATED to match requirements document
 export interface NarrativeSection {
   id: string;
   title: string;
@@ -127,7 +129,25 @@ export interface NarrativeSections {
   [key: string]: NarrativeSection;
 }
 
-// Recommendation Types - Update to a more flexible type
+// Updated section IDs to match the 5 required sections
+export const NARRATIVE_SECTION_IDS = {
+  SUSPICIOUS_ACTIVITY_SUMMARY: "suspicious_activity_summary",
+  PRIOR_CASES: "prior_cases",
+  ACCOUNT_SUBJECT_INFO: "account_subject_info",
+  SUSPICIOUS_ACTIVITY_ANALYSIS: "suspicious_activity_analysis",
+  CONCLUSION: "conclusion"
+};
+
+// Updated section titles to match requirements
+export const NARRATIVE_SECTION_TITLES = {
+  [NARRATIVE_SECTION_IDS.SUSPICIOUS_ACTIVITY_SUMMARY]: "Section 1 - Suspicious Activity Summary",
+  [NARRATIVE_SECTION_IDS.PRIOR_CASES]: "Section 2 - Prior Cases/SARs",
+  [NARRATIVE_SECTION_IDS.ACCOUNT_SUBJECT_INFO]: "Section 3 - Account/Subject Information",
+  [NARRATIVE_SECTION_IDS.SUSPICIOUS_ACTIVITY_ANALYSIS]: "Section 4 - Suspicious Activity Analysis",
+  [NARRATIVE_SECTION_IDS.CONCLUSION]: "Section 5 - Conclusion"
+};
+
+// Recommendation Types
 export interface Recommendation {
   alerting_activity?: string;
   prior_sars?: string;
@@ -193,7 +213,6 @@ export interface RegenerateSectionResponse {
 }
 
 // Add types for alerting activity summary
-
 export interface AlertInfo {
   caseNumber: string;
   alertingAccounts: string;

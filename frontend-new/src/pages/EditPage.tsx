@@ -44,9 +44,22 @@ const EditPage: React.FC = () => {
           if (response.caseInfo) {
             setCaseInfo(response.caseInfo);
           } else if (response.case_data) {
+            // Fix for account number display - prioritize correct source
+            let accountNumber = "";
+            
+            // First try to get account number from Case Information's Relevant Accounts
+            const relevantAccounts = getRelevantAccountsFromCaseData(response.case_data);
+            if (relevantAccounts && relevantAccounts.length > 0) {
+              accountNumber = relevantAccounts[0];
+            } 
+            // If not found, use account_info
+            else if (response.case_data.account_info?.account_number) {
+              accountNumber = response.case_data.account_info.account_number;
+            }
+            
             const extractedInfo = {
               caseNumber: response.case_data.case_number || '',
-              accountNumber: response.case_data.account_info?.account_number || '',
+              accountNumber: accountNumber,
               dateGenerated: new Date().toISOString()
             };
             setCaseInfo(extractedInfo);
@@ -85,6 +98,19 @@ const EditPage: React.FC = () => {
     
     fetchSections();
   }, [sessionId]);
+  
+  // Helper function to extract Relevant Accounts from case_data
+  const getRelevantAccountsFromCaseData = (caseData: any): string[] => {
+    if (!caseData || !caseData.full_data) return [];
+    
+    for (const section of caseData.full_data) {
+      if (section.section === "Case Information" && section["Relevant Accounts"]) {
+        return section["Relevant Accounts"];
+      }
+    }
+    
+    return [];
+  };
   
   const handleTabChange = (tabId: string) => {
     setActiveTab(tabId);

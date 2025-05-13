@@ -280,7 +280,7 @@ def generate_from_case():
 @app.route('/api/sections/<session_id>', methods=['GET'])
 def get_sections(session_id):
     """
-    Get narrative sections for a session
+    Get narrative sections for a session with corrected account number handling
     """
     # Validate session ID to prevent directory traversal
     if not re.match(r'^[0-9a-f\-]+$', session_id):
@@ -307,12 +307,18 @@ def get_sections(session_id):
             "recommendation": data.get("recommendation", {}),
             "case_data": data["case_data"],
             "excel_data": data["excel_data"],
-            "transaction_data": data.get("transaction_data", {}),
-            "caseInfo": {
-                "caseNumber": data["case_data"].get("case_number", ""),
-                "accountNumber": data["case_data"].get("account_info", {}).get("account_number", ""),
-                "dateGenerated": data.get("dateGenerated", datetime.now().isoformat())
-            }
+            "transaction_data": data.get("transaction_data", {})
+        }
+        
+        # Extract account number from the correct source
+        case_data = data["case_data"]
+        account_number = get_correct_account_number(case_data)
+        
+        # Create case info object with correct account number
+        response["caseInfo"] = {
+            "caseNumber": case_data.get("case_number", ""),
+            "accountNumber": account_number,
+            "dateGenerated": data.get("dateGenerated", datetime.now().isoformat())
         }
         
         return jsonify(response), 200
@@ -323,6 +329,47 @@ def get_sections(session_id):
             "status": "error",
             "message": f"Error fetching sections: {str(e)}"
         }), 500
+
+
+def get_correct_account_number(case_data):
+    """
+    Extract the correct account number from case data
+    
+    Args:
+        case_data: The case data dictionary
+        
+    Returns:
+        str: The correct account number
+    """
+    account_number = ""
+    
+    # First priority: Get from Relevant Accounts in Case Information section
+    if case_data.get("full_data"):
+        for section in case_data["full_data"]:
+            if section.get("section") == "Case Information" and section.get("Relevant Accounts"):
+                if section["Relevant Accounts"] and len(section["Relevant Accounts"]) > 0:
+                    account_number = section["Relevant Accounts"][0]
+                    logger.debug(f"Using account number {account_number} from Relevant Accounts")
+                    break
+    
+    # Second priority: Get from case_data.account_info.account_number
+    if not account_number and case_data.get("account_info") and case_data["account_info"].get("account_number"):
+        account_number = case_data["account_info"]["account_number"]
+        logger.debug(f"Using account number {account_number} from account_info")
+    
+    # Third priority: Try to find from accounts array
+    if not account_number and case_data.get("accounts") and len(case_data["accounts"]) > 0:
+        account = case_data["accounts"][0]
+        if account.get("account_number"):
+            account_number = account["account_number"]
+            logger.debug(f"Using account number {account_number} from accounts array")
+    
+    # If still no account number found, log a warning
+    if not account_number:
+        logger.warning(f"No account number found for case {case_data.get('case_number', 'unknown')}")
+        account_number = "Unknown"
+    
+    return account_number
 
 @app.route('/api/regenerate/<session_id>/<section_id>', methods=['POST'])
 def regenerate_section(session_id, section_id):

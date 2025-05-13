@@ -26,31 +26,11 @@ export const ApiService = {
     return response.data;
   },
 
-  // Generate SAR narrative from selected case and uploaded Excel file
-  generateNarrative: async (caseFile: File, excelFile: File): Promise<GenerateResponse> => {
-    const formData = new FormData();
-    formData.append('caseFile', caseFile);
-    formData.append('excelFile', excelFile);
-    
-    const response = await api.post<GenerateResponse>('/generate', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      }
-    });
-    
-    return response.data;
-  },
-  
-  // Generate SAR narrative from existing case and uploaded Excel file
-  generateNarrativeFromCase: async (caseNumber: string, excelFile: File): Promise<GenerateResponse> => {
-    const formData = new FormData();
-    formData.append('case_number', caseNumber);
-    formData.append('excelFile', excelFile);
-    
-    const response = await api.post<GenerateResponse>('/generate-from-case', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      }
+  // Generate SAR narrative from selected case
+  generateNarrativeFromCase: async (caseNumber: string, model: string = 'llama3-8b'): Promise<GenerateResponse> => {
+    const response = await api.post<GenerateResponse>('/generate-from-case', {
+      case_number: caseNumber,
+      model: model
     });
     
     return response.data;

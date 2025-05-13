@@ -1,12 +1,8 @@
-"""
-Enhanced LLM Client with Langchain, robust PII/PCI protection and fact preservation
-"""
-import re
-import json
+# Modified llm_client.py without PII protection
+
 import logging
 from typing import Dict, List, Any, Optional, Tuple
-from hashlib import md5
-import uuid
+import json
 
 from backend.utils.logger import get_logger
 import backend.config as config
@@ -18,108 +14,6 @@ from langchain.schema import HumanMessage, SystemMessage
 from langchain.callbacks.base import BaseCallbackHandler
 
 logger = get_logger(__name__)
-
-class PIIProtector:
-    """Handles PII/PCI protection and restoration"""
-    
-    # Patterns for detecting PII/PCI data with more precise matching
-    PII_PATTERNS = {
-        "account_number": r'(?<!\w)(\d{10,}|[A-Z0-9]{10,})(?!\w)',  # Account numbers (10+ digits or alphanumeric)
-        "name": r'(?<!\w)([A-Z][A-Z\s]+(?:[A-Z]\.?\s)?[A-Z][A-Z]+)(?!\w)',  # Names in ALL CAPS
-        "address": r'(?<!\w)(\d+\s+[A-Z][A-Za-z\s,\.]+(?:ST|AVE|RD|LN|DR|BLVD|STREET|AVENUE|ROAD|CIRCLE|COURT|PLACE|WAY).*?\d{5}(?:-\d{4})?)(?=\n|,|\.|\Z)',  # Full addresses
-        "phone": r'(?<!\w)(\d{3}[-\.\s]?\d{3}[-\.\s]?\d{4})(?!\w)',  # Phone numbers
-        "ssn": r'(?<!\w)(\d{3}[-\.\s]?\d{2}[-\.\s]?\d{4})(?!\w)',  # SSNs
-        "email": r'(?<!\w)([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})(?!\w)',  # Email addresses
-        "case_number": r'(?<!\w)(C[0-9]{7,}|CC[0-9]{10,}|AML[0-9]{7,})(?!\w)',  # Case numbers
-        "tin": r'(?<!\w)(\d{2}-\d{7})(?!\w)',  # Tax identification numbers
-        "party_key": r'(?<!\w)(\d{18,})(?!\w)',  # Party keys (long number sequences)
-        "dob": r'(?<!\w)(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})(?!\w)',  # Date of birth
-        "drivers_license": r'(?<!\w)([A-Z]\d{8,}|\d{8,}[A-Z]?)(?!\w)',  # Driver's license numbers
-        "bank_routing": r'(?<!\w)(\d{9})(?!\w)',  # Bank routing numbers
-    }
-    
-    # Patterns for critical data that must be preserved
-    PRESERVE_PATTERNS = {
-        "money_amount": r'\$[\d,]+\.\d{2}|\$[\d,]+|\d+\s+dollars|\d+\s+USD',  # Money amounts
-        "percentage": r'\d+(?:\.\d+)?%',  # Percentages
-        "transaction_count": r'(?<!\w)(\d+)\s+transactions?(?!\w)',  # Transaction counts
-        "alert_id": r'(?<!\w)(AMLR\d+|AMLC\d+|SAM\d+-\d+|IRF_\d+)(?!\w)',  # Alert IDs
-        "date": r'\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2}|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2},? \d{4}\b',  # Dates
-    }
-    
-    def __init__(self):
-        self.placeholder_map = {}
-        self.counter = 0
-    
-    def _generate_placeholder(self, data_type: str) -> str:
-        """Generate a unique placeholder for PII/PCI data"""
-        self.counter += 1
-        return f"[{data_type}_{self.counter}]"
-    
-    def protect_data(self, text: str) -> Tuple[str, Dict[str, str]]:
-        """
-        Extract and protect both PII/PCI and critical data
-        
-        Args:
-            text: Text containing data to protect
-            
-        Returns:
-            Tuple: (processed_text, placeholder_map)
-        """
-        processed_text = text
-        placeholder_map = {}
-        
-        # First, identify and protect critical data to preserve
-        for data_type, pattern in self.PRESERVE_PATTERNS.items():
-            matches = list(re.finditer(pattern, processed_text))
-            for match in reversed(matches):  # Process from end to avoid position shifts
-                original_value = match.group(0)
-                placeholder = self._generate_placeholder(f"PRESERVE_{data_type.upper()}")
-                placeholder_map[placeholder] = original_value
-                processed_text = processed_text[:match.start()] + placeholder + processed_text[match.end():]
-        
-        # Then, identify and protect PII data
-        for data_type, pattern in self.PII_PATTERNS.items():
-            matches = list(re.finditer(pattern, processed_text))
-            for match in reversed(matches):  # Process from end to avoid position shifts
-                original_value = match.group(0)
-                
-                # Skip if this is part of a preserved pattern
-                skip = False
-                for placeholder in placeholder_map.keys():
-                    if placeholder in processed_text[match.start():match.end()]:
-                        skip = True
-                        break
-                
-                if not skip:
-                    placeholder = self._generate_placeholder(f"PII_{data_type.upper()}")
-                    placeholder_map[placeholder] = original_value
-                    processed_text = processed_text[:match.start()] + placeholder + processed_text[match.end():]
-        
-        self.placeholder_map = placeholder_map
-        return processed_text, placeholder_map
-    
-    def restore_data(self, text: str, placeholder_map: Dict[str, str]) -> str:
-        """
-        Restore all protected data from placeholders
-        
-        Args:
-            text: Text with placeholders
-            placeholder_map: Map of placeholders to original values
-            
-        Returns:
-            str: Text with original values restored
-        """
-        restored_text = text
-        
-        # Sort placeholders by length in descending order to avoid partial replacements
-        sorted_placeholders = sorted(placeholder_map.items(), key=lambda x: len(x[0]), reverse=True)
-        
-        # Replace each placeholder with its original value
-        for placeholder, original in sorted_placeholders:
-            restored_text = restored_text.replace(placeholder, original)
-        
-        return restored_text
 
 class LLMCallbackHandler(BaseCallbackHandler):
     """Callback handler for langchain to log LLM calls"""
@@ -134,7 +28,7 @@ class LLMCallbackHandler(BaseCallbackHandler):
         logger.error(f"LLM call failed: {str(error)}")
 
 class LLMClient:
-    """Client for interacting with language models with enhanced PII/PCI protection and fact preservation"""
+    """Client for interacting with language models"""
     
     def __init__(self, model: str = None, api_key: Optional[str] = None, endpoint: Optional[str] = None):
         """
@@ -148,7 +42,6 @@ class LLMClient:
         self.model = model or config.DEFAULT_LLM_MODEL
         self.api_key = api_key or self._get_api_key_for_model(self.model)
         self.endpoint = endpoint or self._get_endpoint_for_model(self.model)
-        self.pii_protector = PIIProtector()
         self.callback_handler = LLMCallbackHandler()
         
         # Initialize the langchain client based on model type
@@ -214,7 +107,7 @@ class LLMClient:
     
     def generate_content(self, prompt: str, max_tokens: int = 1000, temperature: float = 0.2) -> str:
         """
-        Generate content with PII/PCI protection and fact preservation
+        Generate content without PII protection
         
         Args:
             prompt: The prompt to send to the LLM
@@ -222,24 +115,18 @@ class LLMClient:
             temperature: Temperature setting
             
         Returns:
-            str: Generated text with PII/PCI and critical data restored
+            str: Generated text
         """
         try:
-            # Extract and protect PII/PCI and critical data
-            processed_prompt, placeholder_map = self.pii_protector.protect_data(prompt)
-            
             # Create system message with instructions
             system_message = (
-                "You are an expert in generating SAR (Suspicious Activity Report) documentation. "
-                "This prompt contains special placeholder codes (e.g., [PII_ACCOUNT_NUMBER_1], [PRESERVE_MONEY_AMOUNT_2]). "
-                "IMPORTANT: You MUST preserve these placeholder codes exactly as they appear in your response. "
-                "Do not modify, replace, or remove any placeholder code."
+                "You are an expert in generating SAR (Suspicious Activity Report) documentation."
             )
             
             # Create messages for chat models
             messages = [
                 SystemMessage(content=system_message),
-                HumanMessage(content=processed_prompt)
+                HumanMessage(content=prompt)
             ]
             
             # Update client settings for this call
@@ -260,12 +147,9 @@ class LLMClient:
                     response_text = str(response)
             else:
                 # Completion model
-                response_text = self.llm_client.predict(processed_prompt)
+                response_text = self.llm_client.predict(prompt)
             
-            # Restore PII/PCI and critical data in response
-            restored_response = self.pii_protector.restore_data(response_text, placeholder_map)
-            
-            return restored_response
+            return response_text
             
         except Exception as e:
             logger.error(f"Error generating content: {str(e)}")
@@ -312,7 +196,7 @@ class LLMClient:
                 logger.warning(f"No prompt template defined for section type: {section_type}")
                 return ""
             
-            # Generate content with PII/PCI protection
+            # Generate content without PII protection
             return self.generate_content(prompt, max_tokens=1000, temperature=0.2)
         
         except Exception as e:
@@ -324,6 +208,8 @@ class LLMClient:
             return f"Error generating {section_type} section: {str(e)}"
 
     # SAR NARRATIVE SECTION PROMPTS
+
+# SAR NARRATIVE SECTION PROMPTS
 
     def _create_introduction_prompt(self, data: Dict[str, Any]) -> str:
         """Create prompt for SAR narrative introduction section"""

@@ -438,13 +438,22 @@ def get_available_cases() -> List[Dict[str, Any]]:
         summary = {
             "case_number": case_number,
             "subjects": [],
-            "account_number": "",
+            "account_number": "",  # Will be populated correctly
             "alert_count": 0
         }
         
-        # Extract subject names
+        # Extract subject names and relevant information from case sections
         for section in case_sections:
-            if section.get("section") == "Customer Information":
+            # Process Case Information section FIRST to get Relevant Accounts
+            if section.get("section") == "Case Information":
+                # Use Relevant Accounts array from Case Information section
+                if "Relevant Accounts" in section and section["Relevant Accounts"]:
+                    # Take the first relevant account as the main account number
+                    summary["account_number"] = section["Relevant Accounts"][0]
+                    logger.debug(f"Found account number {summary['account_number']} from Relevant Accounts for case {case_number}")
+            
+            # Get subject information
+            elif section.get("section") == "Customer Information":
                 if "US Bank Customer Information" in section:
                     summary["subjects"] = [customer.get("Primary Party", "") 
                                          for customer in section["US Bank Customer Information"]
@@ -454,21 +463,39 @@ def get_available_cases() -> List[Dict[str, Any]]:
                                          for customer in section["customerInformation"]["US Bank Customers"]
                                          if "Name" in customer]
             
-            # Extract account number
-            elif section.get("section") == "Account Information":
-                if "Accounts" in section and section["Accounts"]:
-                    summary["account_number"] = section["Accounts"][0].get("Account Key", "")
-                elif "accountInformation" in section and "Account" in section["accountInformation"]:
-                    summary["account_number"] = section["accountInformation"]["Account"].get("Account Key", "")
-            
             # Count alerts
             elif section.get("section") == "Alerting Details":
                 if "alerts" in section:
                     summary["alert_count"] = len(section["alerts"])
         
+        # If account_number is still empty, look in Account Information section as fallback
+        if not summary["account_number"]:
+            for section in case_sections:
+                if section.get("section") == "Account Information":
+                    if "Accounts" in section and section["Accounts"]:
+                        summary["account_number"] = section["Accounts"][0].get("Account Key", "")
+                        logger.debug(f"Found account number {summary['account_number']} from Account Key for case {case_number}")
+                    elif "accountInformation" in section and "Account" in section["accountInformation"]:
+                        summary["account_number"] = section["accountInformation"]["Account"].get("Account Key", "")
+                        logger.debug(f"Found account number {summary['account_number']} from accountInformation for case {case_number}")
+        
+        # If still no account number found, try Activity Summary as a last resort
+        if not summary["account_number"]:
+            for section in case_sections:
+                if section.get("section") == "Activity Summary" and "Activity Summary" in section:
+                    activity_summary = section["Activity Summary"]
+                    if activity_summary and isinstance(activity_summary, list) and activity_summary[0].get("Account"):
+                        summary["account_number"] = str(activity_summary[0]["Account"])
+                        logger.debug(f"Found account number {summary['account_number']} from Activity Summary for case {case_number}")
+        
+        # If still no account number, log a warning
+        if not summary["account_number"]:
+            logger.warning(f"No account number found for case {case_number}")
+        
         case_summaries.append(summary)
     
     return case_summaries
+
 
 def get_section(case_number: str, section_name: str) -> Optional[Dict[str, Any]]:
     """
@@ -490,6 +517,46 @@ def get_section(case_number: str, section_name: str) -> Optional[Dict[str, Any]]
             return section
     
     return None
+
+
+def get_case_account_numbers(case_number: str) -> List[str]:
+    """
+    Get all account numbers associated with a case from all possible sources
+    
+    Args:
+        case_number: Case number to retrieve
+        
+    Returns:
+        List[str]: List of account numbers found in the case
+    """
+    account_numbers = []
+    
+    # Get Case Information section for Relevant Accounts
+    case_info_section = get_section(case_number, "Case Information")
+    if case_info_section and "Relevant Accounts" in case_info_section:
+        account_numbers.extend([
+            str(acct) for acct in case_info_section["Relevant Accounts"]
+        ])
+    
+    # Get Account Information section for Account Keys
+    account_info_section = get_section(case_number, "Account Information")
+    if account_info_section:
+        if "Accounts" in account_info_section and account_info_section["Accounts"]:
+            account_numbers.extend([
+                account.get("Account Key", "")
+                for account in account_info_section["Accounts"]
+                if "Account Key" in account
+            ])
+    
+    # Get Activity Summary section for Account numbers
+    activity_section = get_section(case_number, "Activity Summary")
+    if activity_section and "Activity Summary" in activity_section:
+        for activity in activity_section["Activity Summary"]:
+            if "Account" in activity:
+                account_numbers.append(str(activity["Account"]))
+    
+    # Remove duplicates and empty strings
+    return list(set(filter(None, account_numbers)))
 
 def load_cases_from_file(file_path: str) -> bool:
     """

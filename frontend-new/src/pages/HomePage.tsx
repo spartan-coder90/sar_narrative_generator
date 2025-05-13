@@ -1,9 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Form, Button, Alert, Spinner, Container, Row, Col } from 'react-bootstrap';
+import { Card, Form, Button, Alert, Spinner, Container, Row, Col, Badge } from 'react-bootstrap';
 import axios from 'axios';
 import ApiService from '../services/api';
 import { ErrorResponse, CaseSummary } from '../types';
+
+// Define an interface for case items with display name
+interface FormattedCaseSummary extends CaseSummary {
+  displayName: string;
+}
 
 const HomePage: React.FC = () => {
   const navigate = useNavigate();
@@ -12,8 +17,9 @@ const HomePage: React.FC = () => {
   const [isLoadingCases, setIsLoadingCases] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
-  const [availableCases, setAvailableCases] = useState<CaseSummary[]>([]);
+  const [availableCases, setAvailableCases] = useState<FormattedCaseSummary[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>('llama3-8b');
+  const [caseDetails, setCaseDetails] = useState<FormattedCaseSummary | null>(null);
 
   // Fetch available cases on component mount
   useEffect(() => {
@@ -21,7 +27,14 @@ const HomePage: React.FC = () => {
       try {
         setIsLoadingCases(true);
         const response = await ApiService.getAvailableCases();
-        setAvailableCases(response.cases);
+        
+        // Format case display names to show proper account numbers
+        const formattedCases: FormattedCaseSummary[] = response.cases.map(caseItem => ({
+          ...caseItem,
+          displayName: `${caseItem.case_number} - ${caseItem.subjects.join(', ')}${caseItem.account_number ? ` (${caseItem.account_number})` : ''}`
+        }));
+        
+        setAvailableCases(formattedCases);
       } catch (err) {
         console.error('Error fetching available cases:', err);
         setError('Failed to load available cases');
@@ -33,8 +46,22 @@ const HomePage: React.FC = () => {
     fetchCases();
   }, []);
   
+  // Update case details when selection changes
+  useEffect(() => {
+    if (selectedCase) {
+      const selectedCaseDetails = availableCases.find(c => c.case_number === selectedCase);
+      if (selectedCaseDetails) {
+        setCaseDetails(selectedCaseDetails);
+      }
+    } else {
+      setCaseDetails(null);
+    }
+  }, [selectedCase, availableCases]);
+  
   const handleCaseChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setSelectedCase(e.target.value);
+    setError(null);
+    setWarnings([]);
   };
   
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -55,7 +82,7 @@ const HomePage: React.FC = () => {
     
     try {
       // Call API to generate narrative from selected case
-      const response = await ApiService.generateNarrativeFromCase(selectedCase);
+      const response = await ApiService.generateNarrativeFromCase(selectedCase, selectedModel);
       
       // Check if there are warnings
       if (response.warnings && response.warnings.length > 0) {
@@ -105,7 +132,7 @@ const HomePage: React.FC = () => {
                     <option value="">Select a case...</option>
                     {availableCases.map((caseItem) => (
                       <option key={caseItem.case_number} value={caseItem.case_number}>
-                        {caseItem.case_number} - {caseItem.subjects.join(', ')}
+                        {caseItem.displayName}
                       </option>
                     ))}
                   </Form.Select>
@@ -116,9 +143,22 @@ const HomePage: React.FC = () => {
                     </div>
                   )}
                   <Form.Text className="text-muted">
-                    Select existing case to generate a SAR narrative.
+                    Select an existing case to generate a SAR narrative.
                   </Form.Text>
                 </Form.Group>
+                
+                {caseDetails && (
+                  <div className="mb-3 p-3 border rounded bg-light">
+                    <h6>Case Details</h6>
+                    <div><strong>Case Number:</strong> {caseDetails.case_number}</div>
+                    <div><strong>Subject(s):</strong> {caseDetails.subjects.join(', ')}</div>
+                    <div><strong>Account Number:</strong> {caseDetails.account_number || 'N/A'}</div>
+                    <div>
+                      <strong>Alerts:</strong> {' '}
+                      <Badge bg="info">{caseDetails.alert_count} alert{caseDetails.alert_count !== 1 ? 's' : ''}</Badge>
+                    </div>
+                  </div>
+                )}
                 
                 <Form.Group className="mb-3">
                   <Form.Label>LLM Model</Form.Label>
@@ -134,11 +174,13 @@ const HomePage: React.FC = () => {
                     Select the language model to use for generating narrative sections.
                   </Form.Text>
                 </Form.Group>
+                
                 <div className="d-grid">
                   <Button 
                     variant="primary" 
                     type="submit" 
                     disabled={isLoading || !selectedCase}
+                    className="py-2"
                   >
                     {isLoading ? (
                       <>
@@ -150,10 +192,10 @@ const HomePage: React.FC = () => {
                           aria-hidden="true" 
                           className="me-2"
                         />
-                        Processing...
+                        Processing Case...
                       </>
                     ) : (
-                      'Generate Narrative'
+                      'Generate SAR Narrative'
                     )}
                   </Button>
                 </div>

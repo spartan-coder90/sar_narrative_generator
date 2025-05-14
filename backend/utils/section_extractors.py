@@ -25,6 +25,7 @@ def extract_alerting_activity_summary(case_data):
             "transactionalActivityDescription": "",
             "alertDispositionSummary": ""
         },
+        "account": "",
         "creditSummary": {
             "percentTotal": 0,
             "amountTotal": 0,
@@ -55,6 +56,10 @@ def extract_alerting_activity_summary(case_data):
             alerting_activity_summary["alertInfo"]["caseNumber"] = section.get("Case Number", "")
             break
     
+    # Initialize alert months and descriptions lists
+    alert_months = []
+    alert_descriptions = []
+    
     # Extract alerts information from Alerting Details section
     for section in case_data:
         if isinstance(section, dict) and section.get("section") == "Alerting Details":
@@ -64,20 +69,21 @@ def extract_alerting_activity_summary(case_data):
                 
                 # Extract all the alert information we want to display
                 alerting_activity_summary["alertInfo"]["alertID"] = alert.get("Alert ID", "")
-                alerting_activity_summary["alertInfo"]["alertingMonths"] = alert.get("Alert Month", "")
-                alerting_activity_summary["alertInfo"]["alertDescription"] = alert.get("Description", "")
+                alert_months.append(alert.get("Alert Month", ""))
+                alert_descriptions.append(alert.get("Description", ""))
                 alerting_activity_summary["alertInfo"]["reviewPeriod"] = alert.get("Review Period", "")
                 alerting_activity_summary["alertInfo"]["transactionalActivityDescription"] = alert.get("Transactional Activity Description", "")
                 alerting_activity_summary["alertInfo"]["alertDispositionSummary"] = alert.get("Alert Disposition Summary", "")
                 alerting_activity_summary["alertInfo"]["alertingAccounts"] = alert.get("Alerting Account", "")
                 alerting_activity_summary["account"] = alert.get("Alerting Account", "")
                 
-                
             break
     
     # Combine alert information
     alerting_activity_summary["alertInfo"]["alertingMonths"] = ", ".join(alert_months)
     alerting_activity_summary["alertInfo"]["alertDescription"] = "; ".join(alert_descriptions)
+    
+    # Rest of the function remains the same...
     
     # Extract account information
     account_number = ""
@@ -384,6 +390,7 @@ Format your response professionally in one paragraph beginning with "Prior SAR:"
     
     return prompt
 
+
 def extract_scope_of_review(case_data):
     """
     Extract scope of review information directly from raw case data
@@ -469,6 +476,264 @@ Write a brief Scope of Review section for a Suspicious Activity Report (SAR) rec
 Example format: "Accounts were reviewed from [Start Date] to [End Date]. Account [Account Number] was opened on [Open Date]."
 
 Keep this section brief and factual, typically 1-2 sentences. Avoid unnecessary explanations or analysis.
+    """
+    return prompt
+
+def extract_unusual_activity_summary(case_data):
+    """
+    Extract and analyze unusual activity transactions from case data
+    
+    Args:
+        case_data: The raw case data array with nested sections
+        
+    Returns:
+        Dict: Transaction summary statistics
+    """
+    # Initialize the transaction summary structure
+    txn_summary = {
+        "totalAmountCredits": 0.0,
+        "totalAmountDebits": 0.0,
+        "countOfCredits": 0,
+        "countOfDebits": 0,
+        "totalAmountSAR": 0.0,
+        "minDebitAmount": float('inf'),
+        "maxDebitAmount": 0.0,
+        "minCreditAmount": float('inf'),
+        "maxCreditAmount": 0.0,
+        "minTransactionDate": None,
+        "maxTransactionDate": None,
+        "customLanguage": {
+            "highestCountCustomLanguageCredit": "",
+            "highestCountCustomLanguageDebit": "",
+            "highestAmountOfCustomLanguageDebit": 0.0,
+            "highestAmountOfCustomLanguageCredit": 0.0,
+            "highestCountOfCustomLanguageDebit": 0,
+            "highestCountOfCustomLanguageCredit": 0
+        }
+    }
+    
+    # Track counts and amounts by custom language
+    credit_by_custom_language = {}  # {custom_language: {"count": 0, "amount": 0.0}}
+    debit_by_custom_language = {}   # {custom_language: {"count": 0, "amount": 0.0}}
+    
+    # Find the Unusual Activity section
+    unusual_activity_transactions = []
+    
+    for section in case_data:
+        if isinstance(section, dict) and "Unusual Activity" in section:
+            unusual_activity_transactions = section.get("Unusual Activity", [])
+            break
+    
+    # Process each transaction
+    for txn in unusual_activity_transactions:
+        if not isinstance(txn, dict):
+            continue
+            
+        # Extract transaction details
+        txn_date_str = txn.get("Transaction Date", "")
+        debit_credit = txn.get("Debit/Credit", "")
+        amount = float(txn.get("Transaction Amount", 0))
+        custom_language = txn.get("Custom Language", "")
+        
+        # Convert transaction date to datetime for comparison
+        try:
+            # Try different date formats (MM/DD/YYYY or YYYY-MM-DD)
+            txn_date = None
+            for date_format in ["%m/%d/%Y", "%Y-%m-%d"]:
+                try:
+                    txn_date = datetime.strptime(txn_date_str, date_format)
+                    break
+                except ValueError:
+                    continue
+                    
+            if txn_date:
+                # Update min/max dates
+                if txn_summary["minTransactionDate"] is None or txn_date < txn_summary["minTransactionDate"]:
+                    txn_summary["minTransactionDate"] = txn_date
+                
+                if txn_summary["maxTransactionDate"] is None or txn_date > txn_summary["maxTransactionDate"]:
+                    txn_summary["maxTransactionDate"] = txn_date
+        except Exception:
+            # Skip date processing if there are issues
+            pass
+        
+        # Determine if credit or debit
+        is_credit = debit_credit.lower() in ["credit", "cr", "c", "+"]
+        
+        # Update summary based on credit/debit
+        if is_credit:
+            txn_summary["totalAmountCredits"] += amount
+            txn_summary["countOfCredits"] += 1
+            
+            # Update min/max credit amounts
+            if amount < txn_summary["minCreditAmount"]:
+                txn_summary["minCreditAmount"] = amount
+            if amount > txn_summary["maxCreditAmount"]:
+                txn_summary["maxCreditAmount"] = amount
+                
+            # Update custom language stats for credits
+            if custom_language not in credit_by_custom_language:
+                credit_by_custom_language[custom_language] = {"count": 0, "amount": 0.0}
+            
+            credit_by_custom_language[custom_language]["count"] += 1
+            credit_by_custom_language[custom_language]["amount"] += amount
+            
+        else:  # Debit
+            txn_summary["totalAmountDebits"] += amount
+            txn_summary["countOfDebits"] += 1
+            
+            # Update min/max debit amounts
+            if amount < txn_summary["minDebitAmount"]:
+                txn_summary["minDebitAmount"] = amount
+            if amount > txn_summary["maxDebitAmount"]:
+                txn_summary["maxDebitAmount"] = amount
+                
+            # Update custom language stats for debits
+            if custom_language not in debit_by_custom_language:
+                debit_by_custom_language[custom_language] = {"count": 0, "amount": 0.0}
+            
+            debit_by_custom_language[custom_language]["count"] += 1
+            debit_by_custom_language[custom_language]["amount"] += amount
+    
+    # Calculate total SAR amount
+    txn_summary["totalAmountSAR"] = txn_summary["totalAmountCredits"] + txn_summary["totalAmountDebits"]
+    
+    # Find highest count and amount by custom language for credits
+    highest_credit_count = 0
+    highest_credit_amount = 0.0
+    highest_credit_count_language = ""
+    highest_credit_amount_language = ""
+    
+    for language, stats in credit_by_custom_language.items():
+        if stats["count"] > highest_credit_count:
+            highest_credit_count = stats["count"]
+            highest_credit_count_language = language
+            
+        if stats["amount"] > highest_credit_amount:
+            highest_credit_amount = stats["amount"]
+            highest_credit_amount_language = language
+    
+    # Find highest count and amount by custom language for debits
+    highest_debit_count = 0
+    highest_debit_amount = 0.0
+    highest_debit_count_language = ""
+    highest_debit_amount_language = ""
+    
+    for language, stats in debit_by_custom_language.items():
+        if stats["count"] > highest_debit_count:
+            highest_debit_count = stats["count"]
+            highest_debit_count_language = language
+            
+        if stats["amount"] > highest_debit_amount:
+            highest_debit_amount = stats["amount"]
+            highest_debit_amount_language = language
+    
+    # Update custom language summary
+    txn_summary["customLanguage"]["highestCountCustomLanguageCredit"] = highest_credit_count_language
+    txn_summary["customLanguage"]["highestCountCustomLanguageDebit"] = highest_debit_count_language
+    txn_summary["customLanguage"]["highestAmountOfCustomLanguageCredit"] = highest_credit_amount
+    txn_summary["customLanguage"]["highestAmountOfCustomLanguageDebit"] = highest_debit_amount
+    txn_summary["customLanguage"]["highestCountOfCustomLanguageCredit"] = highest_credit_count
+    txn_summary["customLanguage"]["highestCountOfCustomLanguageDebit"] = highest_debit_count
+    
+    # Format dates as strings if they exist
+    if txn_summary["minTransactionDate"]:
+        txn_summary["minTransactionDate"] = txn_summary["minTransactionDate"].strftime("%Y-%m-%d")
+    else:
+        txn_summary["minTransactionDate"] = ""
+        
+    if txn_summary["maxTransactionDate"]:
+        txn_summary["maxTransactionDate"] = txn_summary["maxTransactionDate"].strftime("%Y-%m-%d")
+    else:
+        txn_summary["maxTransactionDate"] = ""
+    
+    # Handle cases where no credits or debits were found
+    if txn_summary["minCreditAmount"] == float('inf'):
+        txn_summary["minCreditAmount"] = 0.0
+    if txn_summary["minDebitAmount"] == float('inf'):
+        txn_summary["minDebitAmount"] = 0.0
+    
+    return {"txnSummary": txn_summary}
+
+def generate_suspicious_activity_prompt(txn_summary, case_data):
+    """
+    Generate a prompt for the LLM to create Section 1 - Suspicious Activity Summary
+    
+    Args:
+        txn_summary: Transaction summary statistics
+        case_data: Case data for additional context
+        
+    Returns:
+        str: Formatted prompt for LLM
+    """
+    # Extract customer/subject information
+    subjects = []
+    for section in case_data:
+        if isinstance(section, dict) and section.get("section") == "Customer Information":
+            if "US Bank Customer Information" in section:
+                for customer in section["US Bank Customer Information"]:
+                    subjects.append(customer.get("Primary Party", ""))
+    
+    # Get primary subject name or fallback
+    primary_subject = subjects[0] if subjects else "the customer"
+    
+    # Get account information
+    account_number = ""
+    account_type = "account"
+    for section in case_data:
+        if isinstance(section, dict) and section.get("section") == "Account Information":
+            if "Accounts" in section and section["Accounts"]:
+                account = section["Accounts"][0]  # Take first account
+                account_number = account.get("Account Key", "")
+                account_type_list = account.get("Account Type", [])
+                if account_type_list and len(account_type_list) > 0:
+                    if isinstance(account_type_list, list):
+                        account_type = account_type_list[1] if len(account_type_list) > 1 else account_type_list[0]
+                    else:
+                        account_type = account_type_list
+    
+    # Format amounts for the prompt
+    total_amount = "${:,.2f}".format(txn_summary["txnSummary"]["totalAmountSAR"])
+    
+    # Determine activity type based on custom language with highest count/amount
+    credit_custom_language = txn_summary["txnSummary"]["customLanguage"]["highestCountCustomLanguageCredit"]
+    debit_custom_language = txn_summary["txnSummary"]["customLanguage"]["highestCountCustomLanguageDebit"]
+    
+    # If both credit and debit have significant activity, use both
+    if (txn_summary["txnSummary"]["totalAmountCredits"] > 1000 and 
+        txn_summary["txnSummary"]["totalAmountDebits"] > 1000):
+        activity_type = f"{credit_custom_language} and {debit_custom_language}"
+    # Otherwise use the one with higher amount
+    elif txn_summary["txnSummary"]["totalAmountCredits"] > txn_summary["txnSummary"]["totalAmountDebits"]:
+        activity_type = credit_custom_language
+    else:
+        activity_type = debit_custom_language
+    
+    # Create the prompt template
+    prompt = f"""
+    Generate Section 1 - Suspicious Activity Summary for a SAR Narrative using ONLY the transaction data provided below:
+    
+    Transaction Summary:
+    - Total SAR Amount: {total_amount}
+    - Total Credits: ${txn_summary["txnSummary"]["totalAmountCredits"]:,.2f} ({txn_summary["txnSummary"]["countOfCredits"]} transactions)
+    - Total Debits: ${txn_summary["txnSummary"]["totalAmountDebits"]:,.2f} ({txn_summary["txnSummary"]["countOfDebits"]} transactions)
+    - Credit Amount Range: ${txn_summary["txnSummary"]["minCreditAmount"]:,.2f} to ${txn_summary["txnSummary"]["maxCreditAmount"]:,.2f}
+    - Debit Amount Range: ${txn_summary["txnSummary"]["minDebitAmount"]:,.2f} to ${txn_summary["txnSummary"]["maxDebitAmount"]:,.2f}
+    - Activity Date Range: {txn_summary["txnSummary"]["minTransactionDate"]} to {txn_summary["txnSummary"]["maxTransactionDate"]}
+    
+    Most Common Transaction Types:
+    - Credits: {credit_custom_language} (Count: {txn_summary["txnSummary"]["customLanguage"]["highestCountOfCustomLanguageCredit"]}, Amount: ${txn_summary["txnSummary"]["customLanguage"]["highestAmountOfCustomLanguageCredit"]:,.2f})
+    - Debits: {debit_custom_language} (Count: {txn_summary["txnSummary"]["customLanguage"]["highestCountOfCustomLanguageDebit"]}, Amount: ${txn_summary["txnSummary"]["customLanguage"]["highestAmountOfCustomLanguageDebit"]:,.2f})
+    
+    Customer/Account Information:
+    - Customer Name: {primary_subject}
+    - Account Number: {account_number}
+    - Account Type: {account_type}
+    
+    Write a detailed opening paragraph for a SAR Narrative that follows this exact structure:
+    "U.S. Bank National Association (USB), is filing this Suspicious Activity Report (SAR) to report [type of activity] totaling [total amount] by [customer name] in [account type] account number [account number]. The suspicious [type of activity] were conducted from [start date] through [end date]."
+    
+    Replace the placeholders with the exact information provided above. The paragraph should be factual, precise, and begin exactly with "U.S. Bank National Association (USB), is filing this Suspicious Activity Report (SAR) to report...". Include all key transaction details, patterns, and amounts.
     """
     
     return prompt

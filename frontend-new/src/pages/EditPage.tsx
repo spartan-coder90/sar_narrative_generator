@@ -34,7 +34,9 @@ const EditPage: React.FC = () => {
   const [isLoadingAlertActivity, setIsLoadingAlertActivity] = useState<boolean>(false);
   const [priorCasesData, setPriorCasesData] = useState<any[]>([]);
   const [isLoadingPriorCases, setIsLoadingPriorCases] = useState<boolean>(false);
-  
+  // Add a new state for generated prior cases summary
+  const [generatedPriorCasesSummary, setGeneratedPriorCasesSummary] = useState<string>('');
+
   useEffect(() => {
     const fetchSections = async () => {
       if (!sessionId) return;
@@ -115,7 +117,7 @@ const EditPage: React.FC = () => {
           
           // Fetch alerting activity data after sections are loaded
           fetchAlertingActivityData();
-          fetchPriorCasesData()
+          fetchPriorCasesData();
         } else {
           setError('Failed to load narrative sections');
         }
@@ -130,18 +132,101 @@ const EditPage: React.FC = () => {
     fetchSections();
   }, [sessionId]);
   
+  // NEW FUNCTION: Initialize LLM-generated content in state
+  // This function ensures that LLM-generated content is properly populated 
+  // in the recommendation state and active section when it becomes available
+  const initializeLLMContent = () => {
+    console.log("Initializing LLM content in state...");
+    console.log(`Alert summary available: ${!!generatedAlertSummary} (${generatedAlertSummary?.length || 0} chars)`);
+    console.log(`Prior cases summary available: ${!!generatedPriorCasesSummary} (${generatedPriorCasesSummary?.length || 0} chars)`);
+    
+    // Check if alerting activity has content to initialize
+    if (generatedAlertSummary && generatedAlertSummary.trim() !== '') {
+      // If recommendation doesn't have this content yet, or it's empty
+      if (!recommendation.alerting_activity || recommendation.alerting_activity.trim() === '') {
+        console.log("Updating alerting_activity with generated content in state");
+        
+        // Update recommendation state
+        setRecommendation(prev => ({
+          ...prev,
+          alerting_activity: generatedAlertSummary
+        }));
+        
+        // If this is the current active section, also update the active section content
+        if (activeSection && activeSection.id === 'alerting_activity') {
+          console.log("Updating activeSection content with generated alert summary");
+          setActiveSection(prev => prev ? {
+            ...prev,
+            content: generatedAlertSummary
+          } : null);
+        }
+      }
+    }
+    
+    // Check if prior cases summary has content to initialize
+    if (generatedPriorCasesSummary && generatedPriorCasesSummary.trim() !== '') {
+      // If recommendation doesn't have this content yet, or it's empty
+      if (!recommendation.prior_sars || recommendation.prior_sars.trim() === '') {
+        console.log("Updating prior_sars with generated content in state");
+        
+        // Update recommendation state
+        setRecommendation(prev => ({
+          ...prev,
+          prior_sars: generatedPriorCasesSummary
+        }));
+        
+        // If this is the current active section, also update the active section content
+        if (activeSection && activeSection.id === 'prior_sars') {
+          console.log("Updating activeSection content with generated prior cases summary");
+          setActiveSection(prev => prev ? {
+            ...prev,
+            content: generatedPriorCasesSummary
+          } : null);
+        }
+      }
+    }
+  };
+  
+  // NEW EFFECT: Run initialization once LLM content is loaded
+  // This effect ensures that when the content is fetched from APIs,
+  // it's properly set in the recommendation state and active section
+  useEffect(() => {
+    // Only run initialization when:
+    // 1. Alerting activity has finished loading (whether successful or not)
+    // 2. Prior cases have finished loading (whether successful or not)
+    // 3. We're not currently loading the overall page 
+    if (!isLoadingAlertActivity && !isLoadingPriorCases && !isLoading) {
+      initializeLLMContent();
+    }
+  }, [
+    isLoadingAlertActivity, 
+    isLoadingPriorCases, 
+    isLoading,
+    generatedAlertSummary, 
+    generatedPriorCasesSummary
+  ]);
   
   const fetchAlertingActivityData = async () => {
     if (!sessionId) return;
     
     try {
       setIsLoadingAlertActivity(true);
+      console.log("Fetching alerting activity data...");
+      
       const response = await ApiService.getAlertingActivitySummary(sessionId);
       
       if (response.status === 'success') {
+        console.log("Successfully fetched alerting activity data");
         setAlertingActivityData(response.alertingActivitySummary);
         setAlertingActivityTemplate(response.llmTemplate || '');
-        setGeneratedAlertSummary(response.generatedSummary || '');
+        
+        // Store the generated summary in state for initialization
+        if (response.generatedSummary) {
+          console.log(`Received generated alert summary (${response.generatedSummary.length} chars)`);
+          setGeneratedAlertSummary(response.generatedSummary);
+        } else {
+          console.warn("No generated summary found in alerting activity response");
+        }
       } else {
         console.warn('Failed to load alerting activity data:', response.message);
       }
@@ -149,6 +234,36 @@ const EditPage: React.FC = () => {
       console.error('Error fetching alerting activity data:', err);
     } finally {
       setIsLoadingAlertActivity(false);
+    }
+  };
+  
+  const fetchPriorCasesData = async () => {
+    if (!sessionId) return;
+    
+    try {
+      setIsLoadingPriorCases(true);
+      console.log("Fetching prior cases data...");
+      
+      const response = await ApiService.getPriorCasesSummary(sessionId);
+      
+      if (response.status === 'success') {
+        console.log("Successfully fetched prior cases data");
+        setPriorCasesData(response.priorCases || []);
+        
+        // Store the generated summary in state for initialization
+        if (response.generatedSummary) {
+          console.log(`Received generated prior cases summary (${response.generatedSummary.length} chars)`);
+          setGeneratedPriorCasesSummary(response.generatedSummary);
+        } else {
+          console.warn("No generated summary found in prior cases response");
+        }
+      } else {
+        console.warn('Failed to load prior cases data:', response.message);
+      }
+    } catch (err) {
+      console.error('Error fetching prior cases data:', err);
+    } finally {
+      setIsLoadingPriorCases(false);
     }
   };
   
@@ -188,51 +303,12 @@ const EditPage: React.FC = () => {
     }
   };
   
-  const fetchPriorCasesData = async () => {
-    if (!sessionId) return;
-    
-    try {
-      setIsLoadingPriorCases(true);
-      const response = await ApiService.getPriorCasesSummary(sessionId);
-      
-      if (response.status === 'success') {
-        setPriorCasesData(response.priorCases || []);
-        
-        // If this section is currently being edited and there's a generated summary,
-        // update the content
-        if (activeSection && 
-            activeSection.id === 'prior_sars' && 
-            activeSection.isRecommendation && 
-            response.generatedSummary) {
-          // Update the recommendation
-          setRecommendation(prev => ({
-            ...prev,
-            prior_sars: response.generatedSummary
-          }));
-          
-          // Update active section content
-          setActiveSection(prev => prev ? { 
-            ...prev, 
-            content: response.generatedSummary 
-          } : null);
-        }
-      } else {
-        console.warn('Failed to load prior cases data:', response.message);
-      }
-    } catch (err) {
-      console.error('Error fetching prior cases data:', err);
-    } finally {
-      setIsLoadingPriorCases(false);
-    }
-  };
-
   const getRecommendationSectionTitle = (sectionId: string): string => {
     const sectionTitles: {[key: string]: string} = {
       "alerting_activity": "Alerting Activity / Reason for Review",
       "prior_sars": "Prior SARs/SAR Summary",
       "scope_of_review": "Scope of Review",
       "investigation_summary": "Summary of Investigation",
-      "analysis_of_activity": "Analysis of Activity",
       "conclusion": "Conclusion",
       "cta": "CTA",
       "bip": "BIP",
@@ -276,6 +352,9 @@ const EditPage: React.FC = () => {
       const sectionId = activeSection.id;
       const content = activeSection.content;
       const isRecommendation = activeSection.isRecommendation;
+      
+      // Log the content being saved for debugging
+      console.log(`Saving section ${sectionId}, content length: ${content.length}`);
       
       // Determine the API endpoint and data format based on section type
       let response;
@@ -342,6 +421,11 @@ const EditPage: React.FC = () => {
           // If the regenerated section is alerting_activity, refresh the data
           if (sectionId === 'alerting_activity') {
             fetchAlertingActivityData();
+          }
+          
+          // If the regenerated section is prior_sars, refresh prior cases data
+          if (sectionId === 'prior_sars') {
+            fetchPriorCasesData();
           }
         } else {
           // Update narrative section
@@ -428,6 +512,18 @@ const EditPage: React.FC = () => {
   const renderSectionEditor = () => {
     if (!activeSection) return null;
     
+    // Add debug information when in development
+    if (process.env.NODE_ENV === 'development') {
+      const relevantContent = 
+        activeSection.id === 'alerting_activity' ? generatedAlertSummary : 
+        activeSection.id === 'prior_sars' ? generatedPriorCasesSummary : '';
+        
+      if (relevantContent) {
+        console.log(`${activeSection.id} - Generated content available (${relevantContent.length} chars)`);
+        console.log(`${activeSection.id} - Current active section content (${activeSection.content.length} chars)`);
+      }
+    }
+    
     // If this is the alerting activity section, use the special editor
     if (activeSection.isRecommendation && activeSection.id === 'alerting_activity') {
       return (
@@ -442,16 +538,17 @@ const EditPage: React.FC = () => {
     }
     
     if (activeSection.isRecommendation && activeSection.id === 'prior_sars') {
-    return (
-      <PriorCasesEditor 
-        sessionId={sessionId || ''}
-        priorCases={priorCasesData}
-        generatedSummary={recommendation.prior_sars}
-        onChange={handleContentChange}
-        content={activeSection.content}
-      />
-    );
-  }
+      return (
+        <PriorCasesEditor 
+          sessionId={sessionId || ''}
+          priorCases={priorCasesData}
+          generatedSummary={generatedPriorCasesSummary}
+          onChange={handleContentChange}
+          content={activeSection.content}
+        />
+      );
+    }
+    
     // Otherwise use the standard section editor
     return (
       <SectionEditor 

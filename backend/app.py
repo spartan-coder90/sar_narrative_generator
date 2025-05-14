@@ -27,6 +27,7 @@ from backend.generators.narrative_generator import NarrativeGenerator
 from backend.utils.json_utils import save_to_json_file, load_from_json_file
 from backend.integrations.llm_client import LLMClient
 from backend.data.case_repository import get_case, get_full_case, get_available_cases
+from backend.utils.section_extractors import extract_prior_cases_summary, generate_prior_cases_prompt
 
 # Set up logging
 logger = get_logger(__name__)
@@ -370,14 +371,10 @@ def get_correct_account_number(case_data):
     
     return account_number
 
-"""
-Add the alerting activity endpoint to app.py
-"""
-
 @app.route('/api/alerting-activity/<session_id>', methods=['GET'])
 def get_alerting_activity(session_id):
     """
-    Get detailed alerting activity summary for a session
+    Get detailed alerting activity summary for a session - with improved error handling
     """
     # Validate session ID to prevent directory traversal
     if not re.match(r'^[0-9a-f\-]+$', session_id):
@@ -404,15 +401,33 @@ def get_alerting_activity(session_id):
         # Generate alerting activity summary if not available
         alerting_activity_summary = transaction_data.get("alerting_activity_summary", {})
         if not alerting_activity_summary:
-            transaction_processor = TransactionProcessor(case_data)
-            alerting_activity_summary = transaction_processor.calculate_alerting_activity_summary()
-            
-            # Save it back to the session data
-            if "transaction_data" not in data:
-                data["transaction_data"] = {}
-            
-            data["transaction_data"]["alerting_activity_summary"] = alerting_activity_summary
-            save_to_json_file(data, data_path)
+            try:
+                transaction_processor = TransactionProcessor(case_data)
+                alerting_activity_summary = transaction_processor.calculate_alerting_activity_summary()
+                
+                # Sanitize data to prevent JSON issues
+                alerting_activity_summary = sanitize_for_json(alerting_activity_summary)
+                
+                # Save it back to the session data
+                if "transaction_data" not in data:
+                    data["transaction_data"] = {}
+                
+                data["transaction_data"]["alerting_activity_summary"] = alerting_activity_summary
+                save_to_json_file(data, data_path)
+            except Exception as e:
+                logger.error(f"Error calculating alerting activity summary: {str(e)}", exc_info=True)
+                # Create simplified structure on error
+                alerting_activity_summary = {
+                    "alertInfo": {
+                        "caseNumber": case_data.get("case_number", ""),
+                        "alertingAccounts": "",
+                        "alertingMonths": "",
+                        "alertDescription": ""
+                    },
+                    "account": "",
+                    "creditSummary": {"amountTotal": 0},
+                    "debitSummary": {"amountTotal": 0}
+                }
         
         # Ensure alerting account is populated
         if not alerting_activity_summary.get("alertInfo", {}).get("alertingAccounts"):
@@ -426,45 +441,14 @@ def get_alerting_activity(session_id):
             alerting_activity_summary["alertInfo"]["alertingAccounts"] = f"{account_type} {account_number}".strip()
             
             # Save updated data
+            if "transaction_data" not in data:
+                data["transaction_data"] = {}
+            
             data["transaction_data"]["alerting_activity_summary"] = alerting_activity_summary
             save_to_json_file(data, data_path)
         
-        # Get LLM template for formatting the alerting activity
-        llm_template = """
-        Summarize this bank account alert information directly without any introductory phrases:
-
-        ALERT INFORMATION:
-        - Case Number: {case_number}
-        - Alerting Account(s): {alerting_accounts}
-        - Alerting Month(s): {alerting_months}
-        - Alert Description: {alert_description}
-
-        ACCOUNT: {account_number}
-
-        CREDITS:
-        - Total amount: ${credit_amount_total}
-        - Number of transactions: {credit_transaction_count}
-        - Date range: {credit_min_date} to {credit_max_date}
-        - Transaction amounts: ${credit_min_amount} to ${credit_max_amount}
-        - Most common activity: {credit_highest_percent_type} ({credit_highest_percent_value}%)
-
-        DEBITS:
-        - Total amount: ${debit_amount_total}
-        - Number of transactions: {debit_transaction_count}
-        - Date range: {debit_min_date} to {debit_max_date}
-        - Transaction amounts: ${debit_min_amount} to ${debit_max_amount}
-        - Most common activity: {debit_highest_percent_type} ({debit_highest_percent_value}%)
-
-        Write a clear summary in this exact format:
-
-        1. First paragraph: Start with the Case Number, then describe the alerting accounts, alerting months, and include a brief description of the alert activity.
-
-        2. Second paragraph: Summarize credit activity focusing on total amount, number of transactions, most common type of activity with its percentage, and range of amounts.
-
-        3. Third paragraph: Summarize debit activity focusing on total amount, number of transactions, most common type of activity with its percentage, and range of amounts.
-
-        Keep sentences short and simple. Do not use phrases like "Here is the summary" or "In conclusion." Start immediately with the case number and keep the summary factual without analysis beyond what's shown in the data.
-        """
+        # Get LLM template for formatting the alerting activity - simplified version
+        llm_template = "Write a summary of the alerting activity based on the information provided."
         
         # Try to get a generated summary from the recommendation data
         generated_summary = ""
@@ -472,39 +456,33 @@ def get_alerting_activity(session_id):
             generated_summary = data["recommendation"]["alerting_activity"]
         
         # If no generated summary exists, generate one using LLM
-        if not generated_summary and "llm_client" in globals():
+        if not generated_summary:
             try:
                 # Initialize LLM client
                 llm_client = LLMClient()
                 
-                # Format the template with actual data
+                # Format the template with actual data - simplified to avoid errors
                 alert_info = alerting_activity_summary.get("alertInfo", {})
                 credit_summary = alerting_activity_summary.get("creditSummary", {})
                 debit_summary = alerting_activity_summary.get("debitSummary", {})
                 
-                formatted_prompt = llm_template.format(
-                    case_number=alert_info.get("caseNumber", ""),
-                    alerting_accounts=alert_info.get("alertingAccounts", ""),
-                    alerting_months=alert_info.get("alertingMonths", ""),
-                    alert_description=alert_info.get("alertDescription", ""),
-                    account_number=alerting_activity_summary.get("account", ""),
-                    credit_amount_total=credit_summary.get("amountTotal", 0),
-                    credit_transaction_count=credit_summary.get("transactionCount", 0),
-                    credit_min_date=credit_summary.get("minTransactionDate", ""),
-                    credit_max_date=credit_summary.get("maxTransactionDate", ""),
-                    credit_min_amount=credit_summary.get("minCreditAmount", 0),
-                    credit_max_amount=credit_summary.get("maxCreditAmount", 0),
-                    credit_highest_percent_type=credit_summary.get("highestPercentType", ""),
-                    credit_highest_percent_value=credit_summary.get("highestPercentValue", 0),
-                    debit_amount_total=debit_summary.get("amountTotal", 0),
-                    debit_transaction_count=debit_summary.get("transactionCount", 0),
-                    debit_min_date=debit_summary.get("minTransactionDate", ""),
-                    debit_max_date=debit_summary.get("maxTransactionDate", ""),
-                    debit_min_amount=debit_summary.get("minDebitAmount", 0),
-                    debit_max_amount=debit_summary.get("maxDebitAmount", 0),
-                    debit_highest_percent_type=debit_summary.get("highestPercentType", ""),
-                    debit_highest_percent_value=debit_summary.get("highestPercentValue", 0)
-                )
+                # Create simplified prompt to avoid JSON errors
+                formatted_prompt = f"""
+                Write a summary about the following alert information:
+                
+                Case Number: {alert_info.get("caseNumber", "")}
+                Alerting Account: {alert_info.get("alertingAccounts", "")}
+                Alerting Month: {alert_info.get("alertingMonths", "")}
+                Alert Description: {alert_info.get("alertDescription", "")}
+                
+                Total Credits: ${credit_summary.get("amountTotal", 0):,.2f}
+                Total Debits: ${debit_summary.get("amountTotal", 0):,.2f}
+                
+                Write a summary in 3 paragraphs:
+                1. First paragraph about the case number and alerting details
+                2. Second paragraph about credit activity
+                3. Third paragraph about debit activity
+                """
                 
                 # Generate the summary
                 generated_summary = llm_client.generate_content(formatted_prompt, max_tokens=800, temperature=0.2)
@@ -516,12 +494,13 @@ def get_alerting_activity(session_id):
                 data["recommendation"]["alerting_activity"] = generated_summary
                 save_to_json_file(data, data_path)
             except Exception as e:
-                logger.error(f"Error generating alerting activity summary: {str(e)}")
+                logger.error(f"Error generating alerting activity summary: {str(e)}", exc_info=True)
+                generated_summary = "Error generating summary. Please try regenerating the section."
         
-        # Create the response data
+        # Create the response data - simplified to avoid JSON errors
         response_data = {
             "status": "success",
-            "alertingActivitySummary": alerting_activity_summary,
+            "alertingActivitySummary": sanitize_for_json(alerting_activity_summary),
             "llmTemplate": llm_template,
             "generatedSummary": generated_summary
         }
@@ -529,7 +508,7 @@ def get_alerting_activity(session_id):
         return jsonify(response_data), 200
         
     except Exception as e:
-        logger.error(f"Error fetching alerting activity summary: {str(e)}")
+        logger.error(f"Error fetching alerting activity summary: {str(e)}", exc_info=True)
         return jsonify({
             "status": "error",
             "message": f"Error fetching alerting activity summary: {str(e)}"
@@ -1136,7 +1115,159 @@ def regenerate_prior_cases(session_id):
         }), 500        
 
 
+@app.route('/api/prior-cases/<session_id>', methods=['GET'])
+def get_prior_cases_summary(session_id):
+    """
+    Get prior cases summary for a session - with improved error handling
+    """
+    # Validate session ID to prevent directory traversal
+    if not re.match(r'^[0-9a-f\-]+$', session_id):
+        return jsonify({
+            "status": "error",
+            "message": "Invalid session ID format"
+        }), 400
+    
+    data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
+    
+    if not os.path.exists(data_path):
+        return jsonify({
+            "status": "error",
+            "message": "Session not found"
+        }), 404
+    
+    try:
+        data = load_from_json_file(data_path)
+        
+        # Get prior cases from session data
+        prior_cases = data.get("prior_cases", [])
+        
+        # If prior cases aren't already extracted, get them
+        if not prior_cases:
+            # Get case number
+            case_number = ""
+            if "case_data" in data:
+                case_number = data["case_data"].get("case_number", "")
+            
+            # Get the original, raw case data
+            raw_case_data = get_full_case(case_number)
+            
+            if not raw_case_data:
+                return jsonify({
+                    "status": "error",
+                    "message": "Case data not found"
+                }), 404
+                
+            try:
+                # Extract prior cases information directly from the raw case data
+                prior_cases = extract_prior_cases_summary(raw_case_data)
+                
+                # Sanitize data to prevent JSON issues
+                prior_cases = sanitize_for_json(prior_cases)
+                
+                # Store prior cases in session data
+                data["prior_cases"] = prior_cases
+                save_to_json_file(data, data_path)
+            except Exception as e:
+                logger.error(f"Error extracting prior cases: {str(e)}", exc_info=True)
+                # Return simplified data on error
+                prior_cases = []
+        
+        # Generate prompt for LLM
+        try:
+            prompt = generate_prior_cases_prompt(prior_cases)
+        except Exception as e:
+            logger.error(f"Error generating prompt: {str(e)}", exc_info=True)
+            prompt = "Error generating prompt for prior cases"
+        
+        # Try to get a generated summary from the recommendation data
+        generated_summary = ""
+        if "recommendation" in data and "prior_sars" in data["recommendation"]:
+            generated_summary = data["recommendation"]["prior_sars"]
+        
+        # If no generated summary exists, generate one using LLM
+        if not generated_summary:
+            try:
+                # Initialize LLM client
+                llm_client = LLMClient()
+                
+                # Generate the new summary
+                generated_summary = llm_client.generate_content(prompt, max_tokens=600, temperature=0.2)
+                
+                # Update recommendation with generated summary
+                if "recommendation" not in data:
+                    data["recommendation"] = {}
+                
+                data["recommendation"]["prior_sars"] = generated_summary
+                save_to_json_file(data, data_path)
+            except Exception as e:
+                logger.error(f"Error generating prior cases summary with LLM: {str(e)}", exc_info=True)
+                generated_summary = "Error generating summary. Please try regenerating the section."
+        
+        # Simplified response data to avoid JSON errors
+        simplified_prior_cases = simplify_prior_cases(prior_cases)
+        
+        # Create the response data
+        response_data = {
+            "status": "success",
+            "priorCases": simplified_prior_cases,
+            "prompt": prompt[:1000] if len(prompt) > 1000 else prompt,  # Truncate long prompts
+            "generatedSummary": generated_summary
+        }
+        
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        logger.error(f"Error fetching prior cases summary: {str(e)}", exc_info=True)
+        return jsonify({
+            "status": "error",
+            "message": f"Error fetching prior cases summary: {str(e)}"
+        }), 500
+def sanitize_for_json(data):
+    """
+    Sanitize data to prevent JSON serialization issues
+    """
+    if isinstance(data, dict):
+        return {k: sanitize_for_json(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [sanitize_for_json(item) for item in data]
+    elif isinstance(data, (int, float)):
+        return data
+    elif data is None:
+        return None
+    else:
+        # Convert everything else to string, truncating if too long
+        str_val = str(data)
+        if len(str_val) > 10000:  # Truncate very long strings
+            return str_val[:10000] + "... [truncated]"
+        return str_val
 
+def simplify_prior_cases(prior_cases):
+    """
+    Create a simplified version of prior cases to avoid JSON issues
+    """
+    simplified = []
+    
+    for case in prior_cases:
+        simple_case = {
+            "case_number": str(case.get("case_number", "")),
+            "case_step": str(case.get("case_step", "")),
+            "alert_ids": [str(aid) for aid in case.get("alert_ids", [])],
+            "alert_months": [str(month) for month in case.get("alert_months", [])],
+            "alerting_account": str(case.get("alerting_account", "")),
+            "scope_of_review": {
+                "start": str(case.get("scope_of_review", {}).get("start", "")),
+                "end": str(case.get("scope_of_review", {}).get("end", ""))
+            },
+            "sar_details": {
+                "form_number": str(case.get("sar_details", {}).get("form_number", "")),
+                "filing_date": str(case.get("sar_details", {}).get("filing_date", "")),
+                "amount_reported": float(case.get("sar_details", {}).get("amount_reported", 0) or 0)
+            },
+            "general_comments": str(case.get("general_comments", ""))[:1000]  # Truncate long comments
+        }
+        simplified.append(simple_case)
+    
+    return simplified
 
 if __name__ == '__main__':
     # Check which variables exist in config for host and port

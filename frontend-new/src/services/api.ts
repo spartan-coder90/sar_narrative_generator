@@ -7,7 +7,7 @@ import {
   RegenerateSectionResponse,
   CaseSummary,
   SectionResponse,
-  AlertingActivitySummary
+  AlertingActivityData  // Added this import
 } from '../types';
 
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8081/api';
@@ -19,6 +19,22 @@ const api = axios.create({
     'Content-Type': 'application/json'
   }
 });
+
+interface PriorCasesResponse {
+  status: string;
+  priorCases: any[];
+  prompt: string;
+  generatedSummary: string;
+  message?: string;
+}
+
+interface AlertingActivityResponse {
+  status: string;
+  alertingActivitySummary?: AlertingActivityData;
+  llmTemplate?: string;
+  generatedSummary: string;
+  message?: string;
+}
 
 // API Service
 export const ApiService = {
@@ -74,38 +90,6 @@ export const ApiService = {
       throw error;
     }
   },
-  
-  // Get alerting activity summary
-  getAlertingActivitySummary: async (sessionId: string): Promise<AlertingActivitySummary> => {
-    try {
-      const response = await api.get(`/alerting-activity/${sessionId}`);
-      
-      if (response.data.status === 'success') {
-        return {
-          status: 'success',
-          alertingActivitySummary: response.data.alertingActivitySummary,
-          llmTemplate: response.data.llmTemplate,
-          generatedSummary: response.data.generatedSummary
-        };
-      }
-      
-      return {
-        status: 'error',
-        message: response.data.message || 'Unknown error',
-        llmTemplate: '',
-        generatedSummary: ''
-      };
-    } catch (error) {
-      console.error('Error getting alerting activity summary:', error);
-      return {
-        status: 'error',
-        message: 'Failed to fetch alerting activity summary',
-        llmTemplate: '',
-        generatedSummary: ''
-      };
-    }
-  },
-  
   // Update a specific section of the SAR narrative
   updateSection: async (
     sessionId: string, 
@@ -156,35 +140,55 @@ export const ApiService = {
     return `${API_BASE_URL}/export-recommendation/${sessionId}`;
   },
   // API Service extensions for prior cases
-  getPriorCasesSummary: async (sessionId: string): Promise<any> => {
+  getPriorCasesSummary: async (sessionId: string): Promise<PriorCasesResponse> => {
     try {
-      const response = await api.get(`/prior-cases/${sessionId}`);
+      console.log(`Fetching prior cases for session: ${sessionId}`);
+      const response = await api.get<PriorCasesResponse>(`/prior-cases/${sessionId}`);
       
-      if (response.data.status === 'success') {
-        return {
-          status: 'success',
-          priorCases: response.data.priorCases,
-          prompt: response.data.prompt,
-          generatedSummary: response.data.generatedSummary
-        };
+      // Debug log to check if summary is present
+      if (response.data.generatedSummary) {
+        console.log(`Received generated summary (${response.data.generatedSummary.length} chars)`);
+      } else {
+        console.warn('No generated summary received in the response');
       }
       
-      return {
-        status: 'error',
-        message: response.data.message || 'Unknown error',
-        prompt: '',
-        generatedSummary: ''
-      };
+      return response.data;
     } catch (error) {
       console.error('Error getting prior cases summary:', error);
       return {
         status: 'error',
         message: 'Failed to fetch prior cases summary',
+        priorCases: [],
         prompt: '',
         generatedSummary: ''
       };
     }
-},
+  },
+  
+  // Enhanced version of getAlertingActivitySummary with better error handling
+  getAlertingActivitySummary: async (sessionId: string): Promise<AlertingActivityResponse> => {
+    try {
+      console.log(`Fetching alerting activity for session: ${sessionId}`);
+      const response = await api.get<AlertingActivityResponse>(`/alerting-activity/${sessionId}`);
+      
+      // Debug log to check if summary is present
+      if (response.data.generatedSummary) {
+        console.log(`Received alert summary (${response.data.generatedSummary.length} chars)`);
+      } else {
+        console.warn('No generated alert summary received in the response');
+      }
+      
+      return response.data;
+    } catch (error) {
+      console.error('Error getting alerting activity summary:', error);
+      return {
+        status: 'error',
+        message: 'Failed to fetch alerting activity summary',
+        alertingActivitySummary: undefined,
+        generatedSummary: ''
+      };
+    }
+  },
 regeneratePriorCasesSummary: async (sessionId: string): Promise<any> => {
   try {
     const response = await api.post(`/regenerate-prior-cases/${sessionId}`);

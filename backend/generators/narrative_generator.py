@@ -8,7 +8,6 @@ import json
 
 from backend.utils.logger import get_logger
 from backend.config import TEMPLATES, ACTIVITY_TYPES, SAR_TEMPLATE, AML_RISK_INDICATORS
-from backend.integrations.llm_client import LLMClient
 
 logger = get_logger(__name__)
 
@@ -33,7 +32,7 @@ SECTION_TITLES = {
 class NarrativeGenerator:
     """Generates SAR recommendations and narratives based on extracted and validated data"""
     
-    def __init__(self, data: Dict[str, Any], llm_client: Optional[LLMClient] = None, model: str = None):
+    def __init__(self, data: Dict[str, Any], llm_client: Optional[Any] = None, model: str = None):
         """
         Initialize with validated data
         
@@ -43,7 +42,12 @@ class NarrativeGenerator:
         """
         self.data = data
         # Pass the model parameter when creating a new LLMClient
-        self.llm_client = llm_client or LLMClient(model=model)
+        if not llm_client:
+            # Import here to avoid circular import
+            from backend.integrations.llm_client import LLMClient
+            self.llm_client = LLMClient(model=model)
+        else:
+            self.llm_client = llm_client
         self.activity_type = None
     
     def determine_activity_type(self) -> Dict[str, Any]:
@@ -231,33 +235,21 @@ class NarrativeGenerator:
         aml_risks = ["structuring", "layering", "multi-location activity", "rapid movement of funds"]
         aml_risks_text = ", ".join(aml_risks)
         
-        # Use the llm_client to generate content with enhanced formatting
-        template_vars = {
-            "activity_type": activity_type.get("name", transaction_types_text),
-            "total_amount": self.format_currency(total_amount),
-            "subjects": self.format_subject_list(),
-            "account_type": account_info.get("account_type", "checking/savings"),
-            "account_number": account_info.get("account_number", ""),
-            "start_date": start_date,
-            "end_date": end_date,
-            "aml_indicators": aml_risks_text
-        }
-        
-        # Prepare for LLM prompt
+        # Create the prompt for the summary
         prompt = f"""
         Write the first section of a SAR (Suspicious Activity Report) narrative following this format:
 
         "U.S. Bank National Association (USB), is filing this Suspicious Activity Report (SAR) to report [type of activity] totaling [total amount] by [customer name] in [account type] account number [account number]. The suspicious activity was conducted from [start date] through [end date]. The AML indicators were as follows: [risk indicators]. This SAR contains an attached Comma Separated Value (CSV) file that provides additional details of the suspicious transactions being reported in this SAR."
 
         Use ONLY these exact details:
-        - Activity type: {template_vars['activity_type']}
-        - Total amount: {template_vars['total_amount']}
-        - Customer name: {template_vars['subjects']}
-        - Account type: {template_vars['account_type']}
-        - Account number: {template_vars['account_number']}
-        - Start date: {template_vars['start_date']}
-        - End date: {template_vars['end_date']}
-        - AML indicators: {template_vars['aml_indicators']}
+        - Activity type: {activity_type.get('name', transaction_types_text)}
+        - Total amount: {self.format_currency(total_amount)}
+        - Customer name: {self.format_subject_list()}
+        - Account type: {account_info.get('account_type', 'checking/savings')}
+        - Account number: {account_info.get('account_number', '')}
+        - Start date: {start_date}
+        - End date: {end_date}
+        - AML indicators: {aml_risks_text}
 
         If acronyms like ACH are used, spell them out on first use, e.g., "Automated Clearing House (ACH)".
         Make sure to mention the CSV file attachment in the last sentence.
@@ -280,7 +272,7 @@ class NarrativeGenerator:
         """
         prior_cases = self.data.get("prior_cases", [])
         
-        # Use the llm_client to generate content
+        # Create the prompt for prior cases
         prior_cases_prompt = f"""
         Write a paragraph about prior SARs (Suspicious Activity Reports) based ONLY on the following information:
         
@@ -376,7 +368,7 @@ class NarrativeGenerator:
                 
                 subject_text += f"{subject_name}: {nationality}, [INVESTIGATOR TO INSERT ID TYPE] # [INVESTIGATOR TO INSERT ID NUMBER] issued on [ISSUE DATE] and expires on [EXPIRATION DATE].\n\n"
         
-        # Combine the sections
+        # Create the prompt for account-subject info
         prompt = f"""
         Write Section 3 - Account/Subject Information based ONLY on the following information:
         
@@ -483,7 +475,7 @@ class NarrativeGenerator:
                 else:
                     transaction_samples += "."
         
-        # Prepare the LLM prompt
+        # Create the prompt for activity analysis
         prompt = f"""
         Write Section 4 - Suspicious Activity Analysis based ONLY on the following information:
         
@@ -521,7 +513,7 @@ class NarrativeGenerator:
         # Get case number
         case_number = self.data.get("case_number", "")
         
-        # Prepare the LLM prompt
+        # Create the prompt for conclusion
         prompt = f"""
         Write Section 5 - Conclusion for a SAR (Suspicious Activity Report) with the following information:
         
@@ -588,7 +580,7 @@ class NarrativeGenerator:
                 "debit_highest_percent_value": debit_summary.get("highestPercentValue", 0)
             }
             
-            # Create prompt for LLM
+            # Create prompt for LLM directly in this method
             alerting_activity_prompt = f"""Summarize this bank account alert information directly without any introductory phrases:
 
     ALERT INFORMATION:
@@ -623,22 +615,32 @@ class NarrativeGenerator:
 
     Keep sentences short and simple. Do not use phrases like "Here is the summary" or "In conclusion." Start immediately with the case number and keep the summary factual without analysis beyond what's shown in the data."""
             
-            # Generate content using LLM
+            # Generate content using LLM directly
             alerting_activity_content = self.llm_client.generate_content(alerting_activity_prompt, max_tokens=600, temperature=0.2)
             if alerting_activity_content:
                 return alerting_activity_content
         
-        # Fall back to original method if alerting activity summary is not available
-        # Prepare data for LLM
-        alert_data = {
-            "case_number": case_number,
-            "account_info": account_info,
-            "alert_info": alert_info,
-            "subject_names": self.format_subject_list(include_relationship=False)
-        }
+        # Fall back to simpler approach if alerting activity summary is not available
+        # Create a direct prompt
+        alert_summary_prompt = f"""
+        Create an Alert Summary section for a SAR recommendation following this format:
+
+        "[Case Number]: [Account Type] and [Account Number] alerted in [Alert Month] for [Alert Description]."
+
+        Use ONLY these exact details:
+        - Case number: {case_number}
+        - Account type: {account_info.get('account_type', 'checking/savings')}
+        - Account number: {account_info.get('account_number', '')}
+        - Account holders: {self.format_subject_list(include_relationship=False)}
         
-        # Use LLM to generate content
-        alerting_activity_content = self.llm_client.generate_section("alert_summary", alert_data)
+        Alert information:
+        {json.dumps(alert_info) if isinstance(alert_info, list) else json.dumps(alert_info) if isinstance(alert_info, dict) else "No alert information available."}
+
+        IMPORTANT: Do not alter, estimate, or make up any information not provided above.
+        If there are multiple alerts, combine them in a single summary by account.
+        """
+        
+        alerting_activity_content = self.llm_client.generate_content(alert_summary_prompt, max_tokens=400, temperature=0.1)
         if alerting_activity_content:
             return alerting_activity_content
         
@@ -666,7 +668,6 @@ class NarrativeGenerator:
         
         return f"{case_number}: {account_info.get('account_type', 'account')} {account_info.get('account_number', '')} alerted in {alert_month_text} for {alert_desc_text}."
     
-    # Other recommendation generation methods remain the same...
     def generate_prior_sars_summary(self) -> str:
         """
         Generate prior SARs section for recommendation
@@ -676,13 +677,24 @@ class NarrativeGenerator:
         """
         prior_cases = self.data.get("prior_cases", [])
         
-        # Prepare data for LLM
-        prior_case_data = {
-            "prior_cases": prior_cases
-        }
+        # Create a direct prompt for prior cases summary
+        prior_case_sar_prompt = f"""
+        Create a Prior Cases/SARs summary section for a SAR recommendation using ONLY the information provided below:
+
+        {json.dumps(prior_cases) if prior_cases else "No prior cases found."}
+
+        If there are no prior cases, write exactly: "No prior SARs were identified for the subjects or account."
         
-        # Use LLM to generate content
-        prior_sars_content = self.llm_client.generate_section("prior_case_sar_summary", prior_case_data)
+        For each prior case, include:
+        "Case [Case Number]: Account [Account Number] reviewed from [Review Period Start] to [Review Period End] due to [Alert Description]."
+
+        If the case resulted in a SAR filing, add:
+        "SAR Form [SAR Form Number] was filed on [Filing Date] reporting [Summary]."
+
+        IMPORTANT: Do not alter, estimate, or make up any information not provided.
+        """
+        
+        prior_sars_content = self.llm_client.generate_content(prior_case_sar_prompt, max_tokens=600, temperature=0.1)
         if prior_sars_content:
             return prior_sars_content
         
@@ -720,14 +732,26 @@ class NarrativeGenerator:
         review_period = self.data.get("review_period", {})
         account_info = self.data.get("account_info", {})
         
-        # Prepare data for LLM
-        review_data = {
-            "review_period": review_period,
-            "account_info": account_info
-        }
+        # Create a direct prompt for scope of review
+        scope_of_review_prompt = f"""
+        Create a Scope of Review section for a SAR recommendation following this format:
+
+        "Accounts were reviewed from [Start Date] to [End Date]."
+
+        If any account was opened or closed during the review period, add:
+        "Account [Account Number] was opened on [Open Date]." or "Account [Account Number] was closed on [Close Date]."
+
+        Use ONLY these exact details:
+        - Start date: {review_period.get('start', '')}
+        - End date: {review_period.get('end', '')}
+        - Account number: {account_info.get('account_number', '')}
+        - Open date: {account_info.get('open_date', '')}
+        - Close date: {account_info.get('close_date', '')}
+
+        IMPORTANT: Do not alter, estimate, or make up any information not provided.
+        """
         
-        # Use LLM to generate content
-        scope_content = self.llm_client.generate_section("scope_of_review", review_data)
+        scope_content = self.llm_client.generate_content(scope_of_review_prompt, max_tokens=200, temperature=0.1)
         if scope_content:
             return scope_content
         
@@ -750,14 +774,26 @@ class NarrativeGenerator:
         account_summaries = self.data.get("account_summaries", {})
         transaction_summary = self.data.get("transaction_summary", {})
         
-        # Prepare data for LLM
-        summary_data = {
-            "account_summaries": account_summaries,
-            "transaction_summary": transaction_summary
-        }
+        # Create a direct prompt for investigation summary
+        investigation_summary_prompt = f"""
+        Create a Summary of Investigation section for a SAR recommendation using ONLY the information provided below:
+
+        {json.dumps(account_summaries)}
+
+        Transaction Summary:
+        {json.dumps(transaction_summary)}
+
+        For each account, write:
+        "Account [Account Number] consisted of the following top credit activity: [credit types with amounts]. Account [Account Number] consisted of the following top debit activity: [debit types with amounts]."
+
+        If there are significant or alerting transactions, add:
+        "The alerting or significant identified transactions consisted of [transaction type] conducted from [date range] totaling [amount]."
+
+        IMPORTANT: Do not alter, estimate, or make up any information not provided.
+        Limit your response to factual details from the provided data.
+        """
         
-        # Use LLM to generate content
-        investigation_content = self.llm_client.generate_section("investigation_summary", summary_data)
+        investigation_content = self.llm_client.generate_content(investigation_summary_prompt, max_tokens=750, temperature=0.1)
         if investigation_content:
             return investigation_content
         
@@ -776,18 +812,25 @@ class NarrativeGenerator:
         activity_type = self.determine_activity_type()
         unusual_activity = self.data.get("unusual_activity", {})
         
-        # Prepare data for LLM
-        conclusion_data = {
-            "is_sar": True,  # Default to SAR recommendation
-            "account_info": account_info,
-            "subject_names": self.format_subject_list(include_relationship=False),
-            "activity_type": activity_type.get("name", "suspicious activity"),
-            "derived_from": activity_type.get("derived_from", "derived from credits and debits"),
-            "unusual_activity": unusual_activity
-        }
+        # Create a direct prompt for recommendation conclusion
+        recommendation_conclusion_prompt = f"""
+        Create a Conclusion section for a SAR recommendation following this format:
+
+        "In conclusion a SAR is recommended to report unusual [Activity Type] activity involving USB accounts [Account Number] and subjects [Subject Names]. The unusual activity totaled [Total Amount] [Derived From] between [Start Date] and [End Date]."
+
+        Use ONLY these exact details:
+        - Account number: {account_info.get('account_number', '')}
+        - Subject names: {self.format_subject_list(include_relationship=False)}
+        - Activity type: {activity_type.get('name', 'suspicious activity')}
+        - Total amount: {self.format_currency(unusual_activity.get('summary', {}).get('total_amount', 0))}
+        - Derived from: {activity_type.get('derived_from', 'derived from credits and debits')}
+        - Start date: {unusual_activity.get('summary', {}).get('date_range', {}).get('start', '')}
+        - End date: {unusual_activity.get('summary', {}).get('date_range', {}).get('end', '')}
+
+        IMPORTANT: Do not alter, estimate, or make up any information not provided.
+        """
         
-        # Use LLM to generate content
-        rec_conclusion_content = self.llm_client.generate_section("recommendation_conclusion", conclusion_data)
+        rec_conclusion_content = self.llm_client.generate_content(recommendation_conclusion_prompt, max_tokens=400, temperature=0.1)
         if rec_conclusion_content:
             return rec_conclusion_content
         
@@ -811,15 +854,16 @@ class NarrativeGenerator:
         # Determine action based on account status
         action = "close" if account_info.get("status", "").upper() == "CLOSED" else "retain"
         
-        # Prepare data for LLM
-        retain_close_data = {
-            "action": action,
-            "account_info": account_info,
-            "subject_names": self.format_subject_list(include_relationship=False)
-        }
+        # Create direct prompt for retain/close
+        retain_close_prompt = f"""
+        Write a {"Retain" if action == "retain" else "Close"} Customer Relationship section for a SAR recommendation:
+
+        "{"Retain" if action == "retain" else "Close"} Customer Relationship(s): {"Accounts and relationships related to " + self.format_subject_list(include_relationship=False) + " are recommended to remain open." if action == "retain" else "Account and relationships related to " + account_info.get('account_number', '') + " and " + self.format_subject_list(include_relationship=False) + " are recommended to close. The following risks were identified with this customer: [Investigator to insert the unusual activity analysis here]"}"
+
+        IMPORTANT: Do not alter, estimate, or make up any information not provided.
+        """
         
-        # Use LLM to generate content
-        retain_close_content = self.llm_client.generate_section("retain_close", retain_close_data)
+        retain_close_content = self.llm_client.generate_content(retain_close_prompt, max_tokens=400, temperature=0.1)
         if retain_close_content:
             return retain_close_content
         
@@ -839,16 +883,22 @@ class NarrativeGenerator:
         account_info = self.data.get("account_info", {})
         unusual_activity = self.data.get("unusual_activity", {})
         
-        # Prepare data for LLM
-        cta_data = {
-            "referral_type": "CTA",
-            "account_info": account_info,
-            "subject_names": self.format_subject_list(include_relationship=False),
-            "unusual_activity": unusual_activity
-        }
+        # Create a direct prompt for CTA
+        cta_prompt = f"""
+        Write a Customer Transaction Assessment (CTA) referral based ONLY on the information provided:
+
+        Account number: {account_info.get('account_number', '')}
+        Account holders: {self.format_subject_list(include_relationship=False)}
+        Review period: {unusual_activity.get('summary', {}).get('date_range', {}).get('start', '')} to {unusual_activity.get('summary', {}).get('date_range', {}).get('end', '')}
+        Activity total: {self.format_currency(unusual_activity.get('summary', {}).get('total_amount', 0))}
+
+        Format as:
+        "Account [account number], held by [signers], was reviewed from [start date] to [end date] and identified potentially unusual activity conducted from [activity start date] to [activity end date] which totaled [total amount]. The activity consisted of [transaction types and amounts]. [Investigator to input analysis of activity/reason for CTA]."
+
+        IMPORTANT: Do not alter, estimate, or make up any information not provided.
+        """
         
-        # Use LLM to generate content
-        cta_content = self.llm_client.generate_section("referral", cta_data)
+        cta_content = self.llm_client.generate_content(cta_prompt, max_tokens=600, temperature=0.1)
         if cta_content:
             return cta_content
         

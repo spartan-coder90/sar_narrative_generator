@@ -51,17 +51,25 @@ CORS(app)  # Enable CORS for all routes
 # Create required directories
 os.makedirs(config.UPLOAD_DIR, exist_ok=True)  # Using UPLOAD_DIR
 
-# Valid section IDs for narrative
+from backend.generators.narrative_generator import SECTION_IDS
+
+# Valid section IDs for narrative - updated to include new section IDs
 VALID_SECTION_IDS = [
+    # Legacy section IDs - keep for backward compatibility
     "introduction", 
     "prior_cases", 
     "account_info", 
+    "subject_info",
     "activity_summary", 
-    "conclusion", 
-    "subject_info", 
-    "transaction_samples"
+    "transaction_samples", 
+    "conclusion",
+    # New section IDs from requirements document
+    SECTION_IDS["SUSPICIOUS_ACTIVITY_SUMMARY"],
+    SECTION_IDS["PRIOR_CASES"],
+    SECTION_IDS["ACCOUNT_SUBJECT_INFO"],
+    SECTION_IDS["SUSPICIOUS_ACTIVITY_ANALYSIS"],
+    SECTION_IDS["CONCLUSION"]
 ]
-
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -548,10 +556,13 @@ def get_alerting_activity(session_id):
             "generatedSummary": ""
         }), 200  # Return 200 with error info for graceful handling
         
+"""
+Updated regenerate section endpoint in app.py to use NarrativeGenerator directly
+"""
 @app.route('/api/regenerate/<session_id>/<section_id>', methods=['POST'])
 def regenerate_section(session_id, section_id):
     """
-    Regenerate a specific section
+    Regenerate a specific section using NarrativeGenerator directly
     """
     # Validate session ID to prevent directory traversal
     if not re.match(r'^[0-9a-f\-]+$', session_id):
@@ -565,9 +576,12 @@ def regenerate_section(session_id, section_id):
         # SAR Narrative sections
         "introduction", "prior_cases", "account_info", "subject_info",
         "activity_summary", "transaction_samples", "conclusion",
+        # Updated section IDs from requirements doc
+        "suspicious_activity_summary", "prior_cases", "account_subject_info",
+        "suspicious_activity_analysis", "conclusion",
         # Recommendation sections
         "alerting_activity", "prior_sars", "scope_of_review", 
-        "investigation_summary", "recommendation_conclusion", "cta", "retain_close"
+        "investigation_summary", "conclusion", "cta", "retain_close"
     ]
     
     # Validate section ID
@@ -604,33 +618,56 @@ def regenerate_section(session_id, section_id):
             })
         
         # Initialize LLM client
+        from backend.integrations.llm_client import LLMClient
         llm_client = LLMClient()
         
-        # Create narrative generator
+        # Initialize NarrativeGenerator
+        from backend.generators.narrative_generator import NarrativeGenerator
         narrative_generator = NarrativeGenerator(combined_data, llm_client)
         
         # Determine if it's a narrative section or recommendation section
         recommendation_sections = ["alerting_activity", "prior_sars", "scope_of_review", 
-                                  "investigation_summary", "recommendation_conclusion", "cta", "retain_close"]
+                                  "investigation_summary", "conclusion", "cta", "retain_close"]
+        
+        # Updated narrative sections based on requirements doc
+        updated_narrative_sections = {
+            "suspicious_activity_summary": "generate_suspicious_activity_summary",
+            "prior_cases": "generate_prior_cases",
+            "account_subject_info": "generate_account_subject_info",
+            "suspicious_activity_analysis": "generate_suspicious_activity_analysis",
+            "conclusion": "generate_conclusion"
+        }
+        
+        # Legacy narrative sections mapping
+        legacy_narrative_sections = {
+            "introduction": "generate_suspicious_activity_summary",
+            "prior_cases": "generate_prior_cases",
+            "account_info": "generate_account_subject_info",
+            "subject_info": "generate_account_subject_info",
+            "activity_summary": "generate_suspicious_activity_analysis",
+            "transaction_samples": "generate_suspicious_activity_analysis",
+            "conclusion": "generate_conclusion"
+        }
+        
+        # Recommendation sections mapping
+        rec_section_mapping = {
+            "alerting_activity": "generate_alerting_activity",
+            "prior_sars": "generate_prior_sars_summary",
+            "scope_of_review": "generate_scope_of_review",
+            "investigation_summary": "generate_investigation_summary",
+            "conclusion": "generate_recommendation_conclusion",
+            "cta": "generate_cta_section",
+            "retain_close": "generate_retain_close"
+        }
         
         section_content = ""
         
         if section_id in recommendation_sections:
-            # Generate recommendation section
-            if section_id == "alerting_activity":
-                section_content = narrative_generator.generate_alerting_activity()
-            elif section_id == "prior_sars":
-                section_content = narrative_generator.generate_prior_sars_summary()
-            elif section_id == "scope_of_review":
-                section_content = narrative_generator.generate_scope_of_review()
-            elif section_id == "investigation_summary":
-                section_content = narrative_generator.generate_investigation_summary()
-            elif section_id == "recommendation_conclusion":
-                section_content = narrative_generator.generate_recommendation_conclusion()
-            elif section_id == "cta":
-                section_content = narrative_generator.generate_cta_section()
-            elif section_id == "retain_close":
-                section_content = narrative_generator.generate_retain_close()
+            # Generate recommendation section using the appropriate method
+            method_name = rec_section_mapping.get(section_id)
+            if method_name:
+                method = getattr(narrative_generator, method_name)
+                section_content = method()
             
             # Update recommendation section in data
             if "recommendation" not in data:
@@ -644,28 +681,53 @@ def regenerate_section(session_id, section_id):
                 "content": section_content,
                 "type": "recommendation"
             }
-        else:
-            # Generate narrative section
-            if section_id == "introduction":
-                section_content = narrative_generator.generate_introduction()
-            elif section_id == "prior_cases":
-                section_content = narrative_generator.generate_prior_cases()
-            elif section_id == "account_info":
-                section_content = narrative_generator.generate_account_info()
-            elif section_id == "subject_info":
-                section_content = narrative_generator.generate_subject_info()
-            elif section_id == "activity_summary":
-                section_content = narrative_generator.generate_activity_summary()
-            elif section_id == "transaction_samples":
-                section_content = narrative_generator.generate_transaction_samples()
-            elif section_id == "conclusion":
-                section_content = narrative_generator.generate_conclusion()
+        elif section_id in updated_narrative_sections:
+            # Generate using updated narrative section methods
+            method_name = updated_narrative_sections.get(section_id)
+            if method_name:
+                method = getattr(narrative_generator, method_name)
+                section_content = method()
             
             # Update section in data
-            data["sections"][section_id]["content"] = section_content
+            if "sections" not in data:
+                data["sections"] = {}
+            
+            data["sections"][section_id] = {
+                "id": section_id,
+                "title": section_id.replace("_", " ").title(),
+                "content": section_content
+            }
             
             # Rebuild full narrative
-            narrative = rebuild_narrative(data["sections"])
+            narrative = narrative_generator.generate_narrative()
+            data["narrative"] = narrative
+            
+            # Return the content in the expected format
+            section_details = {
+                "id": section_id,
+                "content": section_content,
+                "type": "narrative"
+            }
+        else:
+            # Handle legacy narrative sections
+            method_name = legacy_narrative_sections.get(section_id)
+            if method_name:
+                method = getattr(narrative_generator, method_name)
+                section_content = method()
+            
+            # Update section in data
+            if section_id in data.get("sections", {}):
+                data["sections"][section_id]["content"] = section_content
+            else:
+                # Create section if it doesn't exist
+                data["sections"][section_id] = {
+                    "id": section_id,
+                    "title": section_id.replace("_", " ").title(),
+                    "content": section_content
+                }
+            
+            # Rebuild full narrative
+            narrative = narrative_generator.generate_narrative()
             data["narrative"] = narrative
             
             # Return the content in the expected format
@@ -689,7 +751,7 @@ def regenerate_section(session_id, section_id):
             "status": "error",
             "message": f"Error regenerating section: {str(e)}"
         }), 500
-
+        
 @app.route('/api/sections/<session_id>/<section_id>', methods=['PUT'])
 def update_section(session_id, section_id):
     """
@@ -837,7 +899,16 @@ def export_narrative(session_id):
     try:
         data = load_from_json_file(data_path)
         case_data = data["case_data"]
-        narrative = data["narrative"]
+        
+        # Get narrative - if using new section IDs, rebuild the narrative
+        if any(key in data["sections"] for key in [
+            "suspicious_activity_summary", "account_subject_info",
+            "suspicious_activity_analysis"
+        ]):
+            # Use the new sections to rebuild narrative
+            narrative = rebuild_narrative(data["sections"])
+        else:
+            narrative = data["narrative"]
         
         # Create a temporary file for export
         with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as tmp:
@@ -1045,7 +1116,7 @@ def split_narrative_into_sections(narrative):
 
 def rebuild_narrative(sections):
     """
-    Rebuild the full narrative from sections
+    Rebuild the full narrative from sections using new section IDs
     
     Args:
         sections: Dictionary of narrative sections
@@ -1053,14 +1124,14 @@ def rebuild_narrative(sections):
     Returns:
         str: Complete narrative
     """
+    from backend.generators.narrative_generator import SECTION_IDS
+    
     ordered_sections = [
-        sections.get("introduction", {}).get("content", ""),
-        sections.get("prior_cases", {}).get("content", ""),
-        sections.get("account_info", {}).get("content", ""),
-        sections.get("subject_info", {}).get("content", ""),
-        sections.get("activity_summary", {}).get("content", ""),
-        sections.get("transaction_samples", {}).get("content", ""),
-        sections.get("conclusion", {}).get("content", "")
+        sections.get(SECTION_IDS["SUSPICIOUS_ACTIVITY_SUMMARY"], {}).get("content", ""),
+        sections.get(SECTION_IDS["PRIOR_CASES"], {}).get("content", ""),
+        sections.get(SECTION_IDS["ACCOUNT_SUBJECT_INFO"], {}).get("content", ""),
+        sections.get(SECTION_IDS["SUSPICIOUS_ACTIVITY_ANALYSIS"], {}).get("content", ""),
+        sections.get(SECTION_IDS["CONCLUSION"], {}).get("content", "")
     ]
     
     return "\n\n".join([section for section in ordered_sections if section])

@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Form, Button, Row, Col, ButtonGroup, Card, Table, Badge, Alert, Spinner } from 'react-bootstrap';
 import { NarrativeSection, AlertingActivityData } from '../types';
+import { 
+  NarrativeSections, 
+  Recommendation, 
+  NARRATIVE_SECTION_IDS, 
+  NARRATIVE_SECTION_TITLES 
+} from '../types';
 
 interface SectionEditorProps {
   section: NarrativeSection;
@@ -103,6 +109,24 @@ const SectionEditor: React.FC<SectionEditorProps> = ({
     }, 0);
   };
   
+  // Get help text based on section ID
+  const getHelpText = (sectionId: string, isRecommendation: boolean): string => {
+    if (isRecommendation) {
+      // Recommendation section help text...
+    } else {
+      // Narrative section help text based on new section IDs
+      const narrativeHelpText: Record<string, string> = {
+        [NARRATIVE_SECTION_IDS.SUSPICIOUS_ACTIVITY_SUMMARY]: "Summary of unusual activity including transaction types, totals, dates, and AML indicators.",
+        [NARRATIVE_SECTION_IDS.PRIOR_CASES]: "Summarize any relevant prior cases or SARs including case/SAR numbers, review periods, and filing details.",
+        [NARRATIVE_SECTION_IDS.ACCOUNT_SUBJECT_INFO]: "Summary of account details and account holders. Include foreign nationalities and IDs if applicable.",
+        [NARRATIVE_SECTION_IDS.SUSPICIOUS_ACTIVITY_ANALYSIS]: "Detailed analysis of unusual activity identified in transaction data including AML risk indicators.",
+        [NARRATIVE_SECTION_IDS.CONCLUSION]: "Conclusion statement with contact information for supporting documentation."
+      };
+      
+      return narrativeHelpText[sectionId] || "";
+    }
+  };
+
   const getTemplateText = (sectionId: string) => {
     const templates: Record<string, string> = {
       'suspicious_activity_summary': 'U.S. Bank National Association (USB), is filing this Suspicious Activity Report (SAR) to report [type of activity] totaling $[amount] by [subject name] in [account type] account number [account number]. The suspicious activity was conducted from [start date] through [end date]. The AML indicators were as follows: [risk indicators]. This SAR contains an attached Comma Separated Value (CSV) file that provides additional details of the suspicious transactions being reported in this SAR.',

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Form, Spinner, Alert, Card } from 'react-bootstrap';
+import { Form, Spinner, Alert, Card, Table } from 'react-bootstrap';
 import { AlertingActivityData } from '../types';
 
 interface AlertingActivityEditorProps {
@@ -18,7 +18,6 @@ const AlertingActivityEditor: React.FC<AlertingActivityEditorProps> = ({
   content
 }) => {
   const [localContent, setLocalContent] = useState(content);
-  const [isLoading, setIsLoading] = useState(false);
   
   // Update local content when content prop changes
   useEffect(() => {
@@ -50,52 +49,51 @@ const AlertingActivityEditor: React.FC<AlertingActivityEditorProps> = ({
     );
   }
   
-  const { alertInfo, account, creditSummary, debitSummary } = alertingActivityData;
+  const { alertInfo, account } = alertingActivityData;
   
   return (
     <div>
       <Card className="mb-3">
         <Card.Header className="bg-light">
-          <h6 className="mb-0">Alerting Activity Summary</h6>
+          <h6 className="mb-0">Alert Information</h6>
         </Card.Header>
         <Card.Body className="p-3">
-          <div className="mb-3">
-            <strong>Case Number:</strong> {alertInfo.caseNumber}<br />
-            <strong>Alerting Account(s):</strong> {alertInfo.alertingAccounts || account}<br />
-            <strong>Alerting Month(s):</strong> {alertInfo.alertingMonths}<br />
-            <strong>Alert Description:</strong> {alertInfo.alertDescription}
-          </div>
-          
-          <div className="row mb-3">
-            <div className="col-md-6">
-              <div className="card">
-                <div className="card-header bg-light text-dark">
-                  <h6 className="mb-0">Credit Summary</h6>
-                </div>
-                <div className="card-body">
-                  <p><strong>Total Amount:</strong> {formatCurrency(creditSummary.amountTotal)}</p>
-                  <p><strong>Transaction Count:</strong> {creditSummary.transactionCount}</p>
-                  <p><strong>Date Range:</strong> {creditSummary.minTransactionDate} - {creditSummary.maxTransactionDate}</p>
-                  <p><strong>Amount Range:</strong> {formatCurrency(creditSummary.minCreditAmount)} - {formatCurrency(creditSummary.maxCreditAmount)}</p>
-                  <p><strong>Highest Percentage Type:</strong> {creditSummary.highestPercentType} ({creditSummary.highestPercentValue}%)</p>
-                </div>
-              </div>
-            </div>
-            <div className="col-md-6">
-              <div className="card">
-                <div className="card-header bg-light text-dark">
-                  <h6 className="mb-0">Debit Summary</h6>
-                </div>
-                <div className="card-body">
-                  <p><strong>Total Amount:</strong> {formatCurrency(debitSummary.amountTotal)}</p>
-                  <p><strong>Transaction Count:</strong> {debitSummary.transactionCount}</p>
-                  <p><strong>Date Range:</strong> {debitSummary.minTransactionDate} - {debitSummary.maxTransactionDate}</p>
-                  <p><strong>Amount Range:</strong> {formatCurrency(debitSummary.minDebitAmount)} - {formatCurrency(debitSummary.maxDebitAmount)}</p>
-                  <p><strong>Highest Percentage Type:</strong> {debitSummary.highestPercentType} ({debitSummary.highestPercentValue}%)</p>
-                </div>
-              </div>
-            </div>
-          </div>
+          <Table bordered hover size="sm">
+            <tbody>
+              <tr>
+                <th style={{ width: '30%' }}>Case Number</th>
+                <td>{alertInfo.caseNumber}</td>
+              </tr>
+              <tr>
+                <th>Alert ID</th>
+                <td>{alertInfo.alertID}</td>
+              </tr>
+              <tr>
+                <th>Alert Month</th>
+                <td>{alertInfo.alertingMonths}</td>
+              </tr>
+              <tr>
+                <th>Alerting Account</th>
+                <td>{alertInfo.alertingAccounts || account}</td>
+              </tr>
+              <tr>
+                <th>Review Period</th>
+                <td>{alertInfo.reviewPeriod}</td>
+              </tr>
+              <tr>
+                <th>Alert Description</th>
+                <td>{alertInfo.alertDescription}</td>
+              </tr>
+              <tr>
+                <th>Transactional Activity</th>
+                <td>{alertInfo.transactionalActivityDescription}</td>
+              </tr>
+              <tr>
+                <th>Alert Disposition Summary</th>
+                <td>{alertInfo.alertDispositionSummary}</td>
+              </tr>
+            </tbody>
+          </Table>
         </Card.Body>
       </Card>
       

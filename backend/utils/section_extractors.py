@@ -19,9 +19,12 @@ def extract_alerting_activity_summary(case_data):
             "caseNumber": "",
             "alertingAccounts": "",
             "alertingMonths": "",
-            "alertDescription": ""
+            "alertDescription": "",
+            "alertID": "",
+            "reviewPeriod": "",
+            "transactionalActivityDescription": "",
+            "alertDispositionSummary": ""
         },
-        "account": "",
         "creditSummary": {
             "percentTotal": 0,
             "amountTotal": 0,
@@ -48,29 +51,27 @@ def extract_alerting_activity_summary(case_data):
     
     # Extract case number
     for section in case_data:
-        if section.get("section") == "Case Information":
+        if isinstance(section, dict) and section.get("section") == "Case Information":
             alerting_activity_summary["alertInfo"]["caseNumber"] = section.get("Case Number", "")
             break
     
-    # Extract alerts information
-    alert_ids = []
-    alert_months = []
-    alert_descriptions = []
-    
+    # Extract alerts information from Alerting Details section
     for section in case_data:
-        if section.get("section") == "Alerting Details" and "alerts" in section:
+        if isinstance(section, dict) and section.get("section") == "Alerting Details":
             alerts = section.get("alerts", [])
-            for alert in alerts:
-                if "Alert ID" in alert:
-                    alert_ids.append(alert["Alert ID"])
-                if "Alert Month" in alert:
-                    alert_months.append(alert["Alert Month"])
-                if "Description" in alert:
-                    alert_descriptions.append(alert["Description"])
-            
-            # Add alerting account information
-            if alerts and "Alerting Account" in alerts[0]:
-                alerting_activity_summary["alertInfo"]["alertingAccounts"] = alerts[0]["Alerting Account"]
+            if alerts and len(alerts) > 0:
+                alert = alerts[0]  # Use the first alert
+                
+                # Extract all the alert information we want to display
+                alerting_activity_summary["alertInfo"]["alertID"] = alert.get("Alert ID", "")
+                alerting_activity_summary["alertInfo"]["alertingMonths"] = alert.get("Alert Month", "")
+                alerting_activity_summary["alertInfo"]["alertDescription"] = alert.get("Description", "")
+                alerting_activity_summary["alertInfo"]["reviewPeriod"] = alert.get("Review Period", "")
+                alerting_activity_summary["alertInfo"]["transactionalActivityDescription"] = alert.get("Transactional Activity Description", "")
+                alerting_activity_summary["alertInfo"]["alertDispositionSummary"] = alert.get("Alert Disposition Summary", "")
+                alerting_activity_summary["alertInfo"]["alertingAccounts"] = alert.get("Alerting Account", "")
+                alerting_activity_summary["account"] = alert.get("Alerting Account", "")
+                
                 
             break
     
@@ -263,7 +264,7 @@ Keep sentences short and simple. Do not use phrases like "Here is the summary" o
 
 def extract_prior_cases_summary(case_data):
     """
-    Extract prior cases and SARs information directly from raw case data
+    Extract prior cases information directly from raw case data
     
     Args:
         case_data: The raw case data array with nested sections
@@ -275,7 +276,8 @@ def extract_prior_cases_summary(case_data):
     
     # Find the Prior Cases/SARs section
     for section in case_data:
-        if section.get("section") == "Prior Cases/SARs" and "priorCases" in section:
+        if isinstance(section, dict) and section.get("section") == "Prior Cases/SARs":
+            # Look for the priorCases key
             raw_prior_cases = section.get("priorCases", [])
             
             # Process each prior case
@@ -286,56 +288,46 @@ def extract_prior_cases_summary(case_data):
                     "alert_ids": [],
                     "alert_months": [],
                     "alerting_account": "",
-                    "investigation_findings": prior_case.get("Investigative Findings", ""),
                     "scope_of_review": {
                         "start": "",
                         "end": ""
                     },
-                    "investigation_summary": prior_case.get("Investigation Summary", ""),
                     "sar_details": {
                         "form_number": "",
                         "filing_date": "",
                         "amount_reported": 0,
-                        "sar_summary": "",
-                        "attachment": ""
+                        "sar_summary": ""
                     },
                     "general_comments": prior_case.get("General Comments", "")
                 }
                 
-                # Extract alerting information
+                # Extract Alerting Information
                 alerting_info = prior_case.get("Alerting Information", {})
                 if alerting_info:
                     case_info["alert_ids"] = alerting_info.get("Alert IDs", [])
                     case_info["alert_months"] = alerting_info.get("Alert Months", [])
                     case_info["alerting_account"] = alerting_info.get("Alerting Account", "")
                 
-                # Extract scope of review
+                # Extract Scope of Review
                 scope = prior_case.get("Scope of Review", {})
                 if scope:
                     case_info["scope_of_review"]["start"] = scope.get("start", "")
                     case_info["scope_of_review"]["end"] = scope.get("end", "")
                 
-                # Extract SAR details
+                # Extract SAR Details
                 sar_details = prior_case.get("SAR Details", {})
                 if sar_details:
                     case_info["sar_details"]["form_number"] = sar_details.get("Form Number", "")
                     case_info["sar_details"]["filing_date"] = sar_details.get("Filing Date", "")
                     case_info["sar_details"]["amount_reported"] = sar_details.get("Amount Reported", 0)
                     case_info["sar_details"]["sar_summary"] = sar_details.get("SAR Summary", "")
-                    case_info["sar_details"]["attachment"] = sar_details.get("Attachment", "")
-                    
-                    # Extract filing date range if available
-                    if "Filing Date Range" in sar_details:
-                        filing_range = sar_details.get("Filing Date Range", {})
-                        if filing_range:
-                            case_info["sar_details"]["filing_date_start"] = filing_range.get("start", "")
-                            case_info["sar_details"]["filing_date_end"] = filing_range.get("end", "")
                 
                 prior_cases.append(case_info)
             
-            break
+            return prior_cases
     
-    return prior_cases
+    # If no Prior Cases/SARs section found
+    return []
 
 def generate_prior_cases_prompt(prior_cases):
     """
@@ -349,71 +341,46 @@ def generate_prior_cases_prompt(prior_cases):
     """
     # If no prior cases found
     if not prior_cases:
-        return "Review the prior case and SAR information provided:\n\nNo prior cases or SARs were identified for this account or customer.\n\nWrite a brief sentence stating that no prior cases or SARs were identified."
+        return "Write a brief summary stating that no prior SARs were identified for this account or customer."
     
-    prompt = "Review the prior case and SAR information provided:\n\n"
+    # Create structured prompt for LLM
+    prompt = """
+Write a concise summary of the prior SAR case using the following detailed information:
+
+CASE DETAILS:
+- Case Number: {case_number}
+- Case Step: {case_step}
+- Alert IDs: {alert_ids}
+- Alert Months: {alert_months}
+- Alerting Account: {account}
+- Review Period: {start_date} to {end_date}
+- SAR Form Number: {sar_form}
+- SAR Amount: ${sar_amount}
+- SAR Filing Date: {filing_date}
+
+SUMMARY:
+{sar_summary}
+
+CTA COMMENTS:
+{comments}
+
+Format your response professionally in one paragraph beginning with "Prior SAR:" and include all key details. Focus on the case number, alert details, account number, review period dates, SAR information (including amount and form number), and any CTA information.
+""".format(
+        case_number=prior_cases[0].get("case_number", ""),
+        case_step=prior_cases[0].get("case_step", ""),
+        alert_ids=", ".join(prior_cases[0].get("alert_ids", [])),
+        alert_months=", ".join(prior_cases[0].get("alert_months", [])),
+        account=prior_cases[0].get("alerting_account", ""),
+        start_date=prior_cases[0].get("scope_of_review", {}).get("start", ""),
+        end_date=prior_cases[0].get("scope_of_review", {}).get("end", ""),
+        sar_form=prior_cases[0].get("sar_details", {}).get("form_number", ""),
+        sar_amount=prior_cases[0].get("sar_details", {}).get("amount_reported", 0),
+        filing_date=prior_cases[0].get("sar_details", {}).get("filing_date", ""),
+        sar_summary=prior_cases[0].get("sar_details", {}).get("sar_summary", ""),
+        comments=prior_cases[0].get("general_comments", "")
+    )
     
-    # Add details for each prior case
-    for i, case in enumerate(prior_cases):
-        prompt += f"PRIOR CASE {i+1}:\n"
-        prompt += f"Case Number: {case['case_number']}\n"
-        prompt += f"Case Step: {case['case_step']}\n"
-        
-        # Alert information
-        prompt += f"Alert IDs: {', '.join(case['alert_ids'])}\n" if case['alert_ids'] else "Alert IDs: None\n"
-        prompt += f"Alert Months: {', '.join(case['alert_months'])}\n" if case['alert_months'] else "Alert Months: None\n"
-        prompt += f"Alerting Account: {case['alerting_account']}\n"
-        
-        # Scope of review
-        prompt += f"Review Period: {case['scope_of_review']['start']} to {case['scope_of_review']['end']}\n"
-        
-        # SAR details
-        prompt += f"SAR Form Number: {case['sar_details']['form_number']}\n"
-        prompt += f"SAR Filing Date: {case['sar_details']['filing_date']}\n"
-        prompt += f"SAR Amount: ${case['sar_details']['amount_reported']:,.2f}\n"
-        
-        if 'filing_date_start' in case['sar_details'] and 'filing_date_end' in case['sar_details']:
-            prompt += f"SAR Date Range: {case['sar_details']['filing_date_start']} to {case['sar_details']['filing_date_end']}\n"
-        
-        # Add investigative findings or summary if available
-        if case['investigation_findings']:
-            prompt += f"Investigative Findings: {case['investigation_findings']}\n"
-        
-        if case['investigation_summary']:
-            truncated_summary = case['investigation_summary'][:300] + "..." if len(case['investigation_summary']) > 300 else case['investigation_summary']
-            prompt += f"Investigation Summary: {truncated_summary}\n"
-        
-        if case['sar_details']['sar_summary']:
-            truncated_sar_summary = case['sar_details']['sar_summary'][:300] + "..." if len(case['sar_details']['sar_summary']) > 300 else case['sar_details']['sar_summary']
-            prompt += f"SAR Summary: {truncated_sar_summary}\n"
-        
-        # Add general comments (usually includes CTA information)
-        if case['general_comments']:
-            prompt += f"General Comments / CTA: {case['general_comments']}\n"
-        
-        prompt += "\n"
-    
-    # Add formatting instructions
-    prompt += """
-Write a concise summary of the prior cases and SARs following these guidelines:
-
-1. For each prior case, include:
-   - Case number
-   - Alerting account number
-   - Review period (start and end dates)
-   - Alert IDs and types of activity
-   - Whether a SAR was filed (including form number if available)
-   - SAR amount and date range if applicable
-   - Brief summary of the suspicious activity identified
-
-2. If a Customer Transaction Assessment (CTA) was conducted, include a brief mention of the outcome.
-
-Format each prior case as: "Case # [case number]: Alerting account # [account number] reviewed from [start date] to [end date] due to [alerting activity]. SAR ID [form number] reported account # [account number] for activity totaling $[amount] conducted from [date range]. [Brief summary of SAR]."
-
-If no SAR was filed, simply state: "Case # [case number]: Alerting account # [account number] reviewed from [start date] to [end date] due to [alerting activity]. No SAR was filed."
-
-Keep your response concise and factual, focusing only on the relevant case details. Use 1-2 sentences per prior case.
-    """
+    return prompt
     
     return prompt
 

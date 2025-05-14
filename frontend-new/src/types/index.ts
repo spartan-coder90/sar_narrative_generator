@@ -251,10 +251,13 @@ export interface AlertingActivityData {
   debitSummary: DebitSummary;
 }
 
-export interface AlertingActivitySummary {
-  status: string;
-  message?: string;
-  alertingActivitySummary?: AlertingActivityData;
-  llmTemplate?: string;
-  generatedSummary?: string;
+export interface AlertInfo {
+  caseNumber: string;
+  alertingAccounts: string;
+  alertingMonths: string;
+  alertDescription: string;
+  alertID: string;  // Add this
+  reviewPeriod: string;  // Add this
+  transactionalActivityDescription: string;  // Add this
+  alertDispositionSummary: string;  // Add this
 }

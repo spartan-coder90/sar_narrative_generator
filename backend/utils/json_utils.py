@@ -71,3 +71,26 @@ def load_from_json_file(filepath: str) -> Any:
     """
     with open(filepath, 'r', encoding='utf-8') as f:
         return json.load(f)
+
+def sanitize_for_json(data):
+    """
+    Sanitize data to prevent JSON serialization issues
+    
+    Args:
+        data: Data to sanitize
+        
+    Returns:
+        Any: Sanitized data
+    """
+    if isinstance(data, dict):
+        return {k: sanitize_for_json(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [sanitize_for_json(item) for item in data]
+    elif isinstance(data, (int, float, bool)) or data is None:
+        return data
+    else:
+        # Convert everything else to string
+        try:
+            return str(data)
+        except:
+            return "Error converting to string"

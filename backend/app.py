@@ -21,7 +21,6 @@ if project_root not in sys.path:
 # Import config module and other modules
 import backend.config as config
 from backend.utils.logger import get_logger
-from backend.processors.case_processor import CaseProcessor
 from backend.processors.data_validator import DataValidator
 from backend.processors.transaction_processor import TransactionProcessor
 from backend.generators.narrative_generator import NarrativeGenerator
@@ -1052,6 +1051,92 @@ def rebuild_narrative(sections):
     ]
     
     return "\n\n".join([section for section in ordered_sections if section])
+
+        
+@app.route('/api/regenerate-prior-cases/<session_id>', methods=['POST'])
+def regenerate_prior_cases(session_id):
+    """
+    Regenerate prior cases summary for a session
+    """
+    # Validate session ID to prevent directory traversal
+    if not re.match(r'^[0-9a-f\-]+$', session_id):
+        return jsonify({
+            "status": "error",
+            "message": "Invalid session ID format"
+        }), 400
+    
+    data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
+    
+    if not os.path.exists(data_path):
+        return jsonify({
+            "status": "error",
+            "message": "Session not found"
+        }), 404
+    
+    try:
+        data = load_from_json_file(data_path)
+        
+        # Get prior cases from session data
+        prior_cases = data.get("prior_cases", [])
+        
+        # If prior cases aren't already extracted, get them
+        if not prior_cases:
+            # Get case number
+            case_number = ""
+            if "case_data" in data:
+                case_number = data["case_data"].get("case_number", "")
+            
+            # Get the original, raw case data
+            raw_case_data = get_full_case(case_number)
+            
+            if not raw_case_data:
+                return jsonify({
+                    "status": "error",
+                    "message": "Case data not found"
+                }), 404
+                
+            # Extract prior cases information directly from the raw case data
+            prior_cases = extract_prior_cases_summary(raw_case_data)
+            
+            # Store prior cases in session data
+            data["prior_cases"] = prior_cases
+            save_to_json_file(data, data_path)
+        
+        # Generate prompt for LLM
+        prompt = generate_prior_cases_prompt(prior_cases)
+        
+        # Initialize LLM client
+        llm_client = LLMClient()
+        
+        # Generate the new summary
+        generated_summary = llm_client.generate_content(prompt, max_tokens=600, temperature=0.2)
+        
+        # Update recommendation with generated summary
+        if "recommendation" not in data:
+            data["recommendation"] = {}
+        
+        data["recommendation"]["prior_sars"] = generated_summary
+        save_to_json_file(data, data_path)
+        
+        # Create the response data
+        response_data = {
+            "status": "success",
+            "priorCases": prior_cases,
+            "prompt": prompt,
+            "generatedSummary": generated_summary
+        }
+        
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        logger.error(f"Error regenerating prior cases summary: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": f"Error regenerating prior cases summary: {str(e)}"
+        }), 500        
+
+
+
 
 if __name__ == '__main__':
     # Check which variables exist in config for host and port

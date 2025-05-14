@@ -154,7 +154,66 @@ export const ApiService = {
   // Get recommendation export URL
   getRecommendationExportUrl: (sessionId: string): string => {
     return `${API_BASE_URL}/export-recommendation/${sessionId}`;
+  },
+  // API Service extensions for prior cases
+  getPriorCasesSummary: async (sessionId: string): Promise<any> => {
+    try {
+      const response = await api.get(`/prior-cases/${sessionId}`);
+      
+      if (response.data.status === 'success') {
+        return {
+          status: 'success',
+          priorCases: response.data.priorCases,
+          prompt: response.data.prompt,
+          generatedSummary: response.data.generatedSummary
+        };
+      }
+      
+      return {
+        status: 'error',
+        message: response.data.message || 'Unknown error',
+        prompt: '',
+        generatedSummary: ''
+      };
+    } catch (error) {
+      console.error('Error getting prior cases summary:', error);
+      return {
+        status: 'error',
+        message: 'Failed to fetch prior cases summary',
+        prompt: '',
+        generatedSummary: ''
+      };
+    }
+},
+regeneratePriorCasesSummary: async (sessionId: string): Promise<any> => {
+  try {
+    const response = await api.post(`/regenerate-prior-cases/${sessionId}`);
+    
+    if (response.data.status === 'success') {
+      return {
+        status: 'success',
+        priorCases: response.data.priorCases,
+        prompt: response.data.prompt,
+        generatedSummary: response.data.generatedSummary
+      };
+    }
+    
+    return {
+      status: 'error',
+      message: response.data.message || 'Unknown error',
+      prompt: '',
+      generatedSummary: ''
+    };
+  } catch (error) {
+    console.error('Error regenerating prior cases summary:', error);
+    return {
+      status: 'error',
+      message: 'Failed to regenerate prior cases summary',
+      prompt: '',
+      generatedSummary: ''
+    };
   }
+}
 };
 
 export default ApiService;

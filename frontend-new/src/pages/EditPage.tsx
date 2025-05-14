@@ -5,6 +5,7 @@ import { Save, Eye, ArrowLeft, CheckCircle, ArrowClockwise } from 'react-bootstr
 import ApiService from '../services/api';
 import SectionEditor from '../components/SectionEditor';
 import AlertingActivityEditor from '../components/AlertingActivityEditor';
+import PriorCasesEditor from '../components/PriorCasesEditor';
 import { 
   NarrativeSections, 
   Recommendation, 
@@ -31,6 +32,8 @@ const EditPage: React.FC = () => {
   const [alertingActivityTemplate, setAlertingActivityTemplate] = useState<string>('');
   const [generatedAlertSummary, setGeneratedAlertSummary] = useState<string>('');
   const [isLoadingAlertActivity, setIsLoadingAlertActivity] = useState<boolean>(false);
+  const [priorCasesData, setPriorCasesData] = useState<any[]>([]);
+  const [isLoadingPriorCases, setIsLoadingPriorCases] = useState<boolean>(false);
   
   useEffect(() => {
     const fetchSections = async () => {
@@ -112,6 +115,7 @@ const EditPage: React.FC = () => {
           
           // Fetch alerting activity data after sections are loaded
           fetchAlertingActivityData();
+          fetchPriorCasesData()
         } else {
           setError('Failed to load narrative sections');
         }
@@ -125,6 +129,7 @@ const EditPage: React.FC = () => {
     
     fetchSections();
   }, [sessionId]);
+  
   
   const fetchAlertingActivityData = async () => {
     if (!sessionId) return;
@@ -183,14 +188,54 @@ const EditPage: React.FC = () => {
     }
   };
   
+  const fetchPriorCasesData = async () => {
+    if (!sessionId) return;
+    
+    try {
+      setIsLoadingPriorCases(true);
+      const response = await ApiService.getPriorCasesSummary(sessionId);
+      
+      if (response.status === 'success') {
+        setPriorCasesData(response.priorCases || []);
+        
+        // If this section is currently being edited and there's a generated summary,
+        // update the content
+        if (activeSection && 
+            activeSection.id === 'prior_sars' && 
+            activeSection.isRecommendation && 
+            response.generatedSummary) {
+          // Update the recommendation
+          setRecommendation(prev => ({
+            ...prev,
+            prior_sars: response.generatedSummary
+          }));
+          
+          // Update active section content
+          setActiveSection(prev => prev ? { 
+            ...prev, 
+            content: response.generatedSummary 
+          } : null);
+        }
+      } else {
+        console.warn('Failed to load prior cases data:', response.message);
+      }
+    } catch (err) {
+      console.error('Error fetching prior cases data:', err);
+    } finally {
+      setIsLoadingPriorCases(false);
+    }
+  };
+
   const getRecommendationSectionTitle = (sectionId: string): string => {
     const sectionTitles: {[key: string]: string} = {
       "alerting_activity": "Alerting Activity / Reason for Review",
-      "prior_sars": "Prior SARs",
+      "prior_sars": "Prior SARs/SAR Summary",
       "scope_of_review": "Scope of Review",
-      "investigation_summary": "Summary of the Investigation",
-      "conclusion": "Recommendation Conclusion",
+      "investigation_summary": "Summary of Investigation",
+      "analysis_of_activity": "Analysis of Activity",
+      "conclusion": "Conclusion",
       "cta": "CTA",
+      "bip": "BIP",
       "retain_close": "Retain or Close Customer Relationship(s)"
     };
     
@@ -360,6 +405,7 @@ const EditPage: React.FC = () => {
         "investigation_summary": "Describe the investigation findings, red flags, and supporting evidence.",
         "conclusion": "Provide the final recommendation with specific activity details.",
         "cta": "Detail any Customer Transaction Assessment details and questions.",
+        "bip": "Detail any BIP details and questions.",
         "retain_close": "Indicate whether customer relationships should be retained or closed."
       };
       
@@ -395,6 +441,17 @@ const EditPage: React.FC = () => {
       );
     }
     
+    if (activeSection.isRecommendation && activeSection.id === 'prior_sars') {
+    return (
+      <PriorCasesEditor 
+        sessionId={sessionId || ''}
+        priorCases={priorCasesData}
+        generatedSummary={recommendation.prior_sars}
+        onChange={handleContentChange}
+        content={activeSection.content}
+      />
+    );
+  }
     // Otherwise use the standard section editor
     return (
       <SectionEditor 
@@ -491,6 +548,17 @@ const EditPage: React.FC = () => {
                 >
                   CTA
                   {!recommendation["cta"] || recommendation["cta"].trim() === '' ? 
+                    <Badge bg="warning" pill>Empty</Badge> : null
+                  }
+                </Button>
+                <Button
+                  key="bip"
+                  variant="link"
+                  className={`list-group-item list-group-item-action d-flex justify-content-between align-items-center ps-5 ${activeTab === "bip" ? 'active' : ''}`}
+                  onClick={() => handleTabChange("bip")}
+                >
+                  BIP
+                  {!recommendation["bip"] || recommendation["bip"].trim() === '' ? 
                     <Badge bg="warning" pill>Empty</Badge> : null
                   }
                 </Button>

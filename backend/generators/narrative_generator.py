@@ -39,6 +39,7 @@ class NarrativeGenerator:
         Args:
             data: Validated case and transaction data
             llm_client: Optional LLM client for enhanced generation
+            model: Model name to use for generation
         """
         self.data = data
         # Pass the model parameter when creating a new LLMClient

@@ -6,16 +6,11 @@ from backend.utils.logger import get_logger
 import backend.config as config
 
 # Langchain imports
-from langchain_community.chat_models import ChatOpenAI, AzureChatOpenAI
-from langchain_ollama import OllamaLLM
-
+from langchain.chat_models import ChatOpenAI
+from langchain.chat_models.azure_openai import AzureChatOpenAI
+from langchain.llms.ollama import Ollama
 from langchain.schema import HumanMessage, SystemMessage
 from langchain.callbacks.base import BaseCallbackHandler
-
-
-def get_llm_callback_handler() -> BaseCallbackHandler:
-    # Your implementation of a callback handler, if any
-    return None
 
 
 class LLMClient:
@@ -26,51 +21,66 @@ class LLMClient:
         endpoint: Optional[str] = None,
     ):
         """
-        Initialize your LLM client (ChatOpenAI, AzureChatOpenAI, OllamaLLM)
-
+        Initialize the appropriate LLM client based on the model
+        
         Args:
             model: Which model to load (e.g., "gpt-4", "llama3-8b")
             api_key: API key for the model
             endpoint: API endpoint for the model
         """
         logger = get_logger(__name__)
-
+        
+        # Set default model from config if not provided
         self.model = model or config.DEFAULT_LLM_MODEL
-        # Use provided api_key or fallback to environment variable
-        self.api_key = api_key or os.getenv('OPENAI_API_KEY', '')
-        # Use provided endpoint or fallback to environment variable
-        self.endpoint = endpoint or os.getenv('OPENAI_API_BASE', '')
-        self.callback_handler = get_llm_callback_handler()
-
-        # Initialize the langchain client based on model type
+        
+        # Configure API settings based on model type
+        if self.model.startswith("llama"):
+            # Ollama configuration
+            self.api_key = api_key or config.LLAMA_API_KEY
+            self.endpoint = endpoint or config.LLAMA_API_ENDPOINT
+        elif "azure" in (endpoint or "").lower():
+            # Azure OpenAI configuration
+            self.api_key = api_key or config.AZURE_OPENAI_API_KEY
+            self.endpoint = endpoint or config.AZURE_OPENAI_ENDPOINT
+        else:
+            # Standard OpenAI configuration
+            self.api_key = api_key or os.getenv('OPENAI_API_KEY', '')
+            self.endpoint = endpoint or os.getenv('OPENAI_API_BASE', '')
+        
+        # Initialize the LLM client
         self.llm_client = self._initialize_llm_client()
-
         logger.info(f"Initialized LLM client with model: {self.model}")
 
     def _initialize_llm_client(self):
         """
-        Instantiates ChatOpenAI, AzureChatOpenAI, or OllamaLLM based on model.
+        Initialize the appropriate LLM client based on the model type
+        
+        Returns:
+            The initialized LLM client
         """
+        # For Llama models (using Ollama)
         if self.model.startswith("llama"):
-            return OllamaLLM(
+            return Ollama(
                 model=self.model,
-                api_key=self.api_key,
-                endpoint=self.endpoint,
-                callback_handler=self.callback_handler,
+                base_url=self.endpoint
             )
-        elif self.endpoint.startswith("https://azure"):  # adjust detection logic as needed
+        
+        # For Azure OpenAI
+        elif "azure" in (self.endpoint or "").lower():
             return AzureChatOpenAI(
-                engine=self.model,
+                deployment_name=self.model,
                 openai_api_key=self.api_key,
                 openai_api_base=self.endpoint,
-                callback_handler=self.callback_handler,
+                temperature=0.2
             )
+        
+        # Default to standard OpenAI
         else:
             return ChatOpenAI(
                 model_name=self.model,
                 openai_api_key=self.api_key,
-                request_timeout=getattr(config, 'LLM_TIMEOUT_SECONDS', 60),
-                callback_handler=self.callback_handler,
+                temperature=0.2,
+                request_timeout=getattr(config, 'LLM_TIMEOUT_SECONDS', 60)
             )
 
     def generate_content(
@@ -106,18 +116,11 @@ class LLMClient:
                 self.llm_client.temperature = temperature
             if hasattr(self.llm_client, 'max_tokens'):
                 self.llm_client.max_tokens = max_tokens
-            if hasattr(self.llm_client, 'num_predict'):
-                self.llm_client.num_predict = max_tokens
-
+            
             # Generate response
-            if hasattr(self.llm_client, 'invoke'):
-                # Chat-style LLM (ChatOpenAI, AzureChatOpenAI, OllamaLLM, etc.)
-                result = self.llm_client.invoke(messages)
-                response_text = result.content if hasattr(result, 'content') else str(result)
-            else:
-                # Classic completion LLM that accept a single string prompt
-                response_text = self.llm_client.predict(prompt)
-
+            result = self.llm_client.invoke(messages)
+            response_text = result.content if hasattr(result, 'content') else str(result)
+            
             return response_text
 
         except Exception as e:
@@ -134,9 +137,6 @@ class LLMClient:
         Returns:
             Dict: Activity type information
         """
-        # This function now does the determination entirely in Python
-        # without relying on the LLM
-        
         # Simple determination based on keywords in available data
         activity_indicators = {
             "STRUCTURING": ["structure", "ctr", "cash deposit", "multiple deposit", "9000", "below 10000"],

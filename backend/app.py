@@ -8,7 +8,6 @@ import re
 import json
 import tempfile
 from datetime import datetime
-import logging
 from werkzeug.utils import secure_filename
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
@@ -23,11 +22,15 @@ import backend.config as config
 from backend.utils.logger import get_logger
 from backend.processors.data_validator import DataValidator
 from backend.processors.transaction_processor import TransactionProcessor
-from backend.generators.narrative_generator import NarrativeGenerator
-from backend.utils.json_utils import save_to_json_file, load_from_json_file, sanitize_for_json
+from backend.generators.narrative_generator import NarrativeGenerator, SECTION_IDS, SECTION_TITLES
+from backend.utils.json_utils import save_to_json_file, load_from_json_file
 from backend.integrations.llm_client import LLMClient
 from backend.data.case_repository import get_case, get_full_case, get_available_cases
-from backend.utils.section_extractors import extract_prior_cases_summary, generate_prior_cases_prompt
+from backend.utils.section_extractors import (
+    extract_alerting_activity_summary, generate_alerting_activity_prompt,
+    extract_prior_cases_summary, generate_prior_cases_prompt,
+    extract_scope_of_review, generate_scope_of_review_prompt
+)
 
 # Set up logging
 logger = get_logger(__name__)
@@ -51,24 +54,13 @@ CORS(app)  # Enable CORS for all routes
 # Create required directories
 os.makedirs(config.UPLOAD_DIR, exist_ok=True)  # Using UPLOAD_DIR
 
-from backend.generators.narrative_generator import SECTION_IDS
+# Valid section IDs for narrative - updated to match new section format
+VALID_SECTION_IDS = list(SECTION_IDS.values())
 
-# Valid section IDs for narrative - updated to include new section IDs
-VALID_SECTION_IDS = [
-    # Legacy section IDs - keep for backward compatibility
-    "introduction", 
-    "prior_cases", 
-    "account_info", 
-    "subject_info",
-    "activity_summary", 
-    "transaction_samples", 
-    "conclusion",
-    # New section IDs from requirements document
-    SECTION_IDS["SUSPICIOUS_ACTIVITY_SUMMARY"],
-    SECTION_IDS["PRIOR_CASES"],
-    SECTION_IDS["ACCOUNT_SUBJECT_INFO"],
-    SECTION_IDS["SUSPICIOUS_ACTIVITY_ANALYSIS"],
-    SECTION_IDS["CONCLUSION"]
+# Valid recommendation section IDs
+VALID_RECOMMENDATION_SECTIONS = [
+    "alerting_activity", "prior_sars", "scope_of_review", 
+    "investigation_summary", "conclusion", "cta", "retain_close"
 ]
 
 @app.route('/api/health', methods=['GET'])
@@ -160,8 +152,7 @@ def generate_from_case():
         transaction_processor = TransactionProcessor(case_data)
         transaction_data = transaction_processor.get_all_transaction_data()
         
-        # Since we're not using Excel files anymore, we'll adapt the excel_data structure
-        # to work with our transaction data
+        # Create excel_data structure from transaction data
         excel_data = {
             "activity_summary": transaction_data.get("activity_summary", {}),
             "unusual_activity": transaction_data.get("unusual_activity", {}),
@@ -249,8 +240,7 @@ def generate_from_case():
             "dateGenerated": datetime.now().isoformat(),
             "warnings": warnings,
             "sections": sections,
-            "recommendation": recommendation,
-            "wordControl": excel_data.get("word_control_macro", {})
+            "recommendation": recommendation
         }
         
         # Include case and excel data for complete context
@@ -258,6 +248,9 @@ def generate_from_case():
         response["excel_data"] = excel_data
         response["combined_data"] = combined_data
         response["transaction_data"] = transaction_data
+        
+        # Extract prior cases for future reference
+        response["prior_cases"] = extract_prior_cases_summary(full_case_data) if full_case_data else []
         
         # Save a copy of the processed data for later use
         save_to_json_file({
@@ -267,7 +260,8 @@ def generate_from_case():
             "transaction_data": transaction_data,
             "narrative": narrative,
             "sections": sections,
-            "recommendation": recommendation
+            "recommendation": recommendation,
+            "prior_cases": response["prior_cases"]
         }, os.path.join(upload_folder, 'data.json'))
         
         return jsonify(response), 200
@@ -338,7 +332,6 @@ def get_sections(session_id):
             "status": "error",
             "message": f"Error fetching sections: {str(e)}"
         }), 500
-
 
 def get_correct_account_number(case_data):
     """
@@ -429,57 +422,56 @@ def get_alerting_activity(session_id):
             
         case_data = data.get("case_data", {})
         
-        # Extract alert information directly from case data
-        alerting_activity_summary = {
-            "alertInfo": {
-                "caseNumber": case_data.get("case_number", ""),
-                "alertingAccounts": "",
-                "alertingMonths": "",
-                "alertDescription": "",
-                "alertID": "",
-                "reviewPeriod": "",
-                "transactionalActivityDescription": "",
-                "alertDispositionSummary": ""
-            },
-            "account": "",
-            # Keep these for compatibility with existing code
-            "creditSummary": {"amountTotal": 0},
-            "debitSummary": {"amountTotal": 0}
-        }
+        # Get the original full case data to extract alerts properly
+        full_case_data = case_data.get("full_data", [])
+        if not full_case_data and case_data.get("case_number"):
+            # Try to fetch from repository if not in the data
+            full_case_data = get_full_case(case_data.get("case_number"))
         
-        # Find alert information in the full case data
-        full_data = case_data.get("full_data", [])
-        alert_found = False
+        # Extract alerting activity summary from the case data
+        if full_case_data:
+            alerting_activity_summary = extract_alerting_activity_summary(full_case_data)
+        else:
+            # Create a default structure if case data not available
+            alerting_activity_summary = {
+                "alertInfo": {
+                    "caseNumber": case_data.get("case_number", ""),
+                    "alertingAccounts": "",
+                    "alertingMonths": "",
+                    "alertDescription": "",
+                    "alertID": "",
+                    "reviewPeriod": "",
+                    "transactionalActivityDescription": "",
+                    "alertDispositionSummary": ""
+                },
+                "account": "",
+                "creditSummary": {"amountTotal": 0},
+                "debitSummary": {"amountTotal": 0}
+            }
+            
+            # Try to extract some basic alert info from alert_info
+            alert_info = case_data.get("alert_info", [])
+            if isinstance(alert_info, list) and alert_info:
+                alert = alert_info[0]
+                if isinstance(alert, dict):
+                    alerting_activity_summary["alertInfo"]["alertID"] = alert.get("alert_id", "")
+                    alerting_activity_summary["alertInfo"]["alertingMonths"] = alert.get("alert_month", "")
+                    alerting_activity_summary["alertInfo"]["alertDescription"] = alert.get("description", "")
+                    if alert.get("review_period") and isinstance(alert["review_period"], dict):
+                        start = alert["review_period"].get("start", "")
+                        end = alert["review_period"].get("end", "")
+                        if start and end:
+                            alerting_activity_summary["alertInfo"]["reviewPeriod"] = f"{start} to {end}"
         
-        for section in full_data:
-            if isinstance(section, dict) and section.get("section") == "Alerting Details":
-                alerts = section.get("alerts", [])
-                if alerts and len(alerts) > 0:
-                    alert = alerts[0]  # Use the first alert
-                    alert_found = True
-                    
-                    # Extract all relevant alert information
-                    alerting_activity_summary["alertInfo"]["alertID"] = alert.get("Alert ID", "")
-                    alerting_activity_summary["alertInfo"]["alertingMonths"] = alert.get("Alert Month", "")
-                    alerting_activity_summary["alertInfo"]["alertDescription"] = alert.get("Description", "")
-                    alerting_activity_summary["alertInfo"]["reviewPeriod"] = alert.get("Review Period", "")
-                    alerting_activity_summary["alertInfo"]["transactionalActivityDescription"] = alert.get("Transactional Activity Description", "")
-                    alerting_activity_summary["alertInfo"]["alertDispositionSummary"] = alert.get("Alert Disposition Summary", "")
-                    alerting_activity_summary["alertInfo"]["alertingAccounts"] = alert.get("Alerting Account", "")
-                    alerting_activity_summary["account"] = alert.get("Alerting Account", "")
-                    break  # Found what we needed
-        
-        # If alert information wasn't found, log a warning
-        if not alert_found:
-            logger.warning(f"No alert information found for case: {case_data.get('case_number', '')}")
-        
-        # If alerting account is still not populated, use account_info
-        if not alerting_activity_summary["alertInfo"]["alertingAccounts"]:
-            account_info = case_data.get("account_info", {})
+        # Get account information regardless of source
+        account_info = case_data.get("account_info", {})
+        if account_info:
             account_type = account_info.get("account_type", "")
             account_number = account_info.get("account_number", "")
-            alerting_activity_summary["alertInfo"]["alertingAccounts"] = f"{account_type} {account_number}".strip()
-            alerting_activity_summary["account"] = account_number
+            if not alerting_activity_summary["alertInfo"]["alertingAccounts"]:
+                alerting_activity_summary["alertInfo"]["alertingAccounts"] = f"{account_type} {account_number}".strip()
+            if not alerting_activity_summary["account"]:
+                alerting_activity_summary["account"] = account_number
         
         # Get existing generated summary if available
         generated_summary = ""
@@ -492,33 +484,11 @@ def get_alerting_activity(session_id):
                 # Initialize LLM client
                 llm_client = LLMClient()
                 
-                # Create a better prompt using the actual alert data
-                alert_info = alerting_activity_summary["alertInfo"]
-                formatted_prompt = f"""
-                Write a professional summary for a SAR (Suspicious Activity Report) based on this alerting information:
-                
-                Case Number: {alert_info["caseNumber"]}
-                Alert ID: {alert_info["alertID"]}
-                Alerting Account: {alert_info["alertingAccounts"]}
-                Alert Month: {alert_info["alertingMonths"]}
-                Review Period: {alert_info["reviewPeriod"]}
-                
-                Alert Description: 
-                {alert_info["alertDescription"]}
-                
-                Transactional Activity Description:
-                {alert_info["transactionalActivityDescription"]}
-                
-                Alert Disposition Summary:
-                {alert_info["alertDispositionSummary"]}
-                
-                Write a concise, formal summary in the "Alerting Activity / Reason for Review" section format,
-                starting with the case number and explaining what triggered the alert and why the case was 
-                selected for review. Format should be suitable for a bank compliance document.
-                """
+                # Create a prompt using the actual alert data
+                prompt = generate_alerting_activity_prompt(alerting_activity_summary)
                 
                 # Generate the summary
-                generated_summary = llm_client.generate_content(formatted_prompt, max_tokens=500, temperature=0.1)
+                generated_summary = llm_client.generate_content(prompt, max_tokens=500, temperature=0.1)
                 
                 # Update recommendation with generated summary
                 if "recommendation" not in data:
@@ -533,8 +503,7 @@ def get_alerting_activity(session_id):
         # Create the response data
         response_data = {
             "status": "success",
-            "alertingActivitySummary": alerting_activity_summary,  # The sanitize_for_json was causing an error
-            "llmTemplate": "Write a summary of the alerting activity based on the provided alert information.",
+            "alertingActivitySummary": alerting_activity_summary,
             "generatedSummary": generated_summary
         }
         
@@ -555,10 +524,7 @@ def get_alerting_activity(session_id):
             },
             "generatedSummary": ""
         }), 200  # Return 200 with error info for graceful handling
-        
-"""
-Updated regenerate section endpoint in app.py to use NarrativeGenerator directly
-"""
+
 @app.route('/api/regenerate/<session_id>/<section_id>', methods=['POST'])
 def regenerate_section(session_id, section_id):
     """
@@ -571,21 +537,8 @@ def regenerate_section(session_id, section_id):
             "message": "Invalid session ID format"
         }), 400
     
-    # Expand valid section IDs to include recommendation sections
-    VALID_SECTION_IDS_EXTENDED = [
-        # SAR Narrative sections
-        "introduction", "prior_cases", "account_info", "subject_info",
-        "activity_summary", "transaction_samples", "conclusion",
-        # Updated section IDs from requirements doc
-        "suspicious_activity_summary", "prior_cases", "account_subject_info",
-        "suspicious_activity_analysis", "conclusion",
-        # Recommendation sections
-        "alerting_activity", "prior_sars", "scope_of_review", 
-        "investigation_summary", "conclusion", "cta", "retain_close"
-    ]
-    
     # Validate section ID
-    if section_id not in VALID_SECTION_IDS_EXTENDED:
+    if section_id not in VALID_SECTION_IDS and section_id not in VALID_RECOMMENDATION_SECTIONS:
         return jsonify({
             "status": "error",
             "message": "Invalid section ID"
@@ -602,72 +555,37 @@ def regenerate_section(session_id, section_id):
     try:
         data = load_from_json_file(data_path)
         
-        # Regenerate the specified section
+        # Get the combined data for generation
         combined_data = data["combined_data"]
-        transaction_data = data.get("transaction_data", {})
-        
-        # Add transaction data to combined data if it's not already there
-        if transaction_data:
-            combined_data.update({
-                "activity_summary": transaction_data.get("activity_summary", {}),
-                "transactions": transaction_data.get("transactions", {}),
-                "unusual_activity": transaction_data.get("unusual_activity", {}),
-                "counterparties": transaction_data.get("counterparties", {}),
-                "cta_sample": transaction_data.get("cta_sample", {}),
-                "bip_sample": transaction_data.get("bip_sample", {})
-            })
         
         # Initialize LLM client
-        from backend.integrations.llm_client import LLMClient
         llm_client = LLMClient()
         
         # Initialize NarrativeGenerator
-        from backend.generators.narrative_generator import NarrativeGenerator
         narrative_generator = NarrativeGenerator(combined_data, llm_client)
         
         # Determine if it's a narrative section or recommendation section
-        recommendation_sections = ["alerting_activity", "prior_sars", "scope_of_review", 
-                                  "investigation_summary", "conclusion", "cta", "retain_close"]
+        is_recommendation = section_id in VALID_RECOMMENDATION_SECTIONS
         
-        # Updated narrative sections based on requirements doc
-        updated_narrative_sections = {
-            "suspicious_activity_summary": "generate_suspicious_activity_summary",
-            "prior_cases": "generate_prior_cases",
-            "account_subject_info": "generate_account_subject_info",
-            "suspicious_activity_analysis": "generate_suspicious_activity_analysis",
-            "conclusion": "generate_conclusion"
-        }
-        
-        # Legacy narrative sections mapping
-        legacy_narrative_sections = {
-            "introduction": "generate_suspicious_activity_summary",
-            "prior_cases": "generate_prior_cases",
-            "account_info": "generate_account_subject_info",
-            "subject_info": "generate_account_subject_info",
-            "activity_summary": "generate_suspicious_activity_analysis",
-            "transaction_samples": "generate_suspicious_activity_analysis",
-            "conclusion": "generate_conclusion"
-        }
-        
-        # Recommendation sections mapping
-        rec_section_mapping = {
-            "alerting_activity": "generate_alerting_activity",
-            "prior_sars": "generate_prior_sars_summary",
-            "scope_of_review": "generate_scope_of_review",
-            "investigation_summary": "generate_investigation_summary",
-            "conclusion": "generate_recommendation_conclusion",
-            "cta": "generate_cta_section",
-            "retain_close": "generate_retain_close"
-        }
-        
-        section_content = ""
-        
-        if section_id in recommendation_sections:
-            # Generate recommendation section using the appropriate method
-            method_name = rec_section_mapping.get(section_id)
-            if method_name:
+        # Generate section content based on section ID
+        if is_recommendation:
+            # Handle recommendation sections
+            method_name = f"generate_{section_id}"
+            if hasattr(narrative_generator, method_name):
                 method = getattr(narrative_generator, method_name)
                 section_content = method()
+            else:
+                # Special handling for sections that don't have direct method mappings
+                if section_id == "alerting_activity":
+                    section_content = narrative_generator.generate_alerting_activity()
+                elif section_id == "prior_sars":
+                    section_content = narrative_generator.generate_prior_sars_summary()
+                else:
+                    # Fallback - unknown section
+                    return jsonify({
+                        "status": "error",
+                        "message": f"Unknown recommendation section: {section_id}"
+                    }), 400
             
             # Update recommendation section in data
             if "recommendation" not in data:
@@ -681,12 +599,30 @@ def regenerate_section(session_id, section_id):
                 "content": section_content,
                 "type": "recommendation"
             }
-        elif section_id in updated_narrative_sections:
-            # Generate using updated narrative section methods
-            method_name = updated_narrative_sections.get(section_id)
-            if method_name:
+        else:
+            # Handle narrative sections
+            method_name = f"generate_{section_id}"
+            if hasattr(narrative_generator, method_name):
                 method = getattr(narrative_generator, method_name)
                 section_content = method()
+            else:
+                # Try to map section ID to generator method
+                section_method_mapping = {
+                    SECTION_IDS["SUSPICIOUS_ACTIVITY_SUMMARY"]: narrative_generator.generate_suspicious_activity_summary,
+                    SECTION_IDS["PRIOR_CASES"]: narrative_generator.generate_prior_cases,
+                    SECTION_IDS["ACCOUNT_SUBJECT_INFO"]: narrative_generator.generate_account_subject_info,
+                    SECTION_IDS["SUSPICIOUS_ACTIVITY_ANALYSIS"]: narrative_generator.generate_suspicious_activity_analysis,
+                    SECTION_IDS["CONCLUSION"]: narrative_generator.generate_conclusion
+                }
+                
+                if section_id in section_method_mapping:
+                    section_content = section_method_mapping[section_id]()
+                else:
+                    # Fallback - unknown section
+                    return jsonify({
+                        "status": "error",
+                        "message": f"Unknown narrative section: {section_id}"
+                    }), 400
             
             # Update section in data
             if "sections" not in data:
@@ -694,37 +630,9 @@ def regenerate_section(session_id, section_id):
             
             data["sections"][section_id] = {
                 "id": section_id,
-                "title": section_id.replace("_", " ").title(),
+                "title": SECTION_TITLES.get(section_id, section_id.replace("_", " ").title()),
                 "content": section_content
             }
-            
-            # Rebuild full narrative
-            narrative = narrative_generator.generate_narrative()
-            data["narrative"] = narrative
-            
-            # Return the content in the expected format
-            section_details = {
-                "id": section_id,
-                "content": section_content,
-                "type": "narrative"
-            }
-        else:
-            # Handle legacy narrative sections
-            method_name = legacy_narrative_sections.get(section_id)
-            if method_name:
-                method = getattr(narrative_generator, method_name)
-                section_content = method()
-            
-            # Update section in data
-            if section_id in data.get("sections", {}):
-                data["sections"][section_id]["content"] = section_content
-            else:
-                # Create section if it doesn't exist
-                data["sections"][section_id] = {
-                    "id": section_id,
-                    "title": section_id.replace("_", " ").title(),
-                    "content": section_content
-                }
             
             # Rebuild full narrative
             narrative = narrative_generator.generate_narrative()
@@ -793,7 +701,8 @@ def update_section(session_id, section_id):
         data["sections"][section_id]["content"] = content
         
         # Rebuild full narrative
-        narrative = rebuild_narrative(data["sections"])
+        narrative_generator = NarrativeGenerator(data["combined_data"])
+        narrative = narrative_generator.generate_narrative()
         data["narrative"] = narrative
         
         # Save updated data
@@ -823,14 +732,8 @@ def update_recommendation_section(session_id, section_id):
             "message": "Invalid session ID format"
         }), 400
     
-    # Define valid recommendation section IDs
-    valid_recommendation_sections = [
-        "alerting_activity", "prior_sars", "scope_of_review", 
-        "investigation_summary", "conclusion", "cta", "retain_close"
-    ]
-    
     # Validate section ID
-    if section_id not in valid_recommendation_sections:
+    if section_id not in VALID_RECOMMENDATION_SECTIONS:
         return jsonify({
             "status": "error",
             "message": "Invalid recommendation section ID"
@@ -876,6 +779,157 @@ def update_recommendation_section(session_id, section_id):
             "message": f"Error updating recommendation section: {str(e)}"
         }), 500
 
+@app.route('/api/prior-cases/<session_id>', methods=['GET'])
+def get_prior_cases_summary(session_id):
+    """
+    Get prior cases summary for a session
+    """
+    # Validate session ID to prevent directory traversal
+    if not re.match(r'^[0-9a-f\-]+$', session_id):
+        return jsonify({
+            "status": "error",
+            "message": "Invalid session ID format"
+        }), 400
+    
+    data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
+    
+    if not os.path.exists(data_path):
+        return jsonify({
+            "status": "error",
+            "message": "Session not found"
+        }), 404
+    
+    try:
+        data = load_from_json_file(data_path)
+        
+        # Try to get prior cases from session data
+        prior_cases = data.get("prior_cases", [])
+        
+        # If no prior cases, try to extract them from case data
+        if not prior_cases and "case_data" in data:
+            case_data = data["case_data"]
+            case_number = case_data.get("case_number", "")
+            full_data = case_data.get("full_data", [])
+            
+            if full_data:
+                prior_cases = extract_prior_cases_summary(full_data)
+            elif case_number:
+                # Try to retrieve from repository
+                full_case_data = get_full_case(case_number)
+                if full_case_data:
+                    prior_cases = extract_prior_cases_summary(full_case_data)
+            
+            # Save prior cases in session data
+            data["prior_cases"] = prior_cases
+            save_to_json_file(data, data_path)
+        
+        # Generate prompt for LLM
+        prompt = generate_prior_cases_prompt(prior_cases)
+        
+        # Get existing generated summary
+        generated_summary = ""
+        if "recommendation" in data and "prior_sars" in data["recommendation"]:
+            generated_summary = data["recommendation"]["prior_sars"]
+        
+        # Generate summary if none exists
+        if not generated_summary and prior_cases:
+            # Initialize LLM client
+            llm_client = LLMClient()
+            
+            # Generate summary
+            generated_summary = llm_client.generate_content(prompt, max_tokens=500, temperature=0.1)
+            
+            # Save generated summary
+            if "recommendation" not in data:
+                data["recommendation"] = {}
+            
+            data["recommendation"]["prior_sars"] = generated_summary
+            save_to_json_file(data, data_path)
+        
+        return jsonify({
+            "status": "success",
+            "priorCases": prior_cases,
+            "prompt": prompt,
+            "generatedSummary": generated_summary
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error fetching prior cases summary: {str(e)}")
+        return jsonify({
+            "status": "success",  # Still return success for graceful UI handling
+            "message": f"Error fetching prior cases summary: {str(e)}",
+            "priorCases": [],
+            "prompt": "Write a brief summary stating that no prior SARs were identified for this account or customer.",
+            "generatedSummary": "No prior SARs were identified for the subjects or account."
+        }), 200
+
+@app.route('/api/regenerate-prior-cases/<session_id>', methods=['POST'])
+def regenerate_prior_cases(session_id):
+    """
+    Regenerate prior cases summary for a session
+    """
+    # Validate session ID to prevent directory traversal
+    if not re.match(r'^[0-9a-f\-]+$', session_id):
+        return jsonify({
+            "status": "error",
+            "message": "Invalid session ID format"
+        }), 400
+    
+    data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
+    
+    if not os.path.exists(data_path):
+        return jsonify({
+            "status": "error",
+            "message": "Session not found"
+        }), 404
+    
+    try:
+        data = load_from_json_file(data_path)
+        
+        # Get case number and try to retrieve updated prior cases
+        case_data = data.get("case_data", {})
+        case_number = case_data.get("case_number", "")
+        
+        # Try to get prior cases from various sources
+        prior_cases = data.get("prior_cases", [])
+        
+        if not prior_cases and case_number:
+            # Try to get from full case data
+            full_case_data = get_full_case(case_number)
+            if full_case_data:
+                prior_cases = extract_prior_cases_summary(full_case_data)
+                data["prior_cases"] = prior_cases
+        
+        # Generate prompt
+        prompt = generate_prior_cases_prompt(prior_cases)
+        
+        # Initialize LLM client
+        llm_client = LLMClient()
+        
+        # Generate new summary
+        generated_summary = llm_client.generate_content(prompt, max_tokens=500, temperature=0.1)
+        
+        # Update recommendation
+        if "recommendation" not in data:
+            data["recommendation"] = {}
+        
+        data["recommendation"]["prior_sars"] = generated_summary
+        save_to_json_file(data, data_path)
+        
+        return jsonify({
+            "status": "success",
+            "priorCases": prior_cases,
+            "prompt": prompt,
+            "generatedSummary": generated_summary
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error regenerating prior cases summary: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": f"Error regenerating prior cases summary: {str(e)}"
+        }), 500
+
 @app.route('/api/export/<session_id>', methods=['GET'])
 def export_narrative(session_id):
     """
@@ -899,16 +953,16 @@ def export_narrative(session_id):
     try:
         data = load_from_json_file(data_path)
         case_data = data["case_data"]
+        sections = data["sections"]
         
-        # Get narrative - if using new section IDs, rebuild the narrative
-        if any(key in data["sections"] for key in [
-            "suspicious_activity_summary", "account_subject_info",
-            "suspicious_activity_analysis"
-        ]):
-            # Use the new sections to rebuild narrative
-            narrative = rebuild_narrative(data["sections"])
-        else:
-            narrative = data["narrative"]
+        # Rebuild the narrative from sections using the updated section IDs
+        narrative = "\n\n".join([
+            sections.get(SECTION_IDS["SUSPICIOUS_ACTIVITY_SUMMARY"], {}).get("content", ""),
+            sections.get(SECTION_IDS["PRIOR_CASES"], {}).get("content", ""),
+            sections.get(SECTION_IDS["ACCOUNT_SUBJECT_INFO"], {}).get("content", ""),
+            sections.get(SECTION_IDS["SUSPICIOUS_ACTIVITY_ANALYSIS"], {}).get("content", ""),
+            sections.get(SECTION_IDS["CONCLUSION"], {}).get("content", "")
+        ])
         
         # Create a temporary file for export
         with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as tmp:
@@ -1048,325 +1102,6 @@ def export_recommendation(session_id):
             "status": "error",
             "message": f"Error exporting recommendation: {str(e)}"
         }), 500
-
-def split_narrative_into_sections(narrative):
-    """
-    Split the narrative into editable sections
-    
-    Args:
-        narrative: Full narrative text
-        
-    Returns:
-        dict: Sections with ID, title, and content
-    """
-    if not narrative:
-        # Handle empty narrative
-        return {
-            "introduction": {"id": "introduction", "title": "Introduction", "content": ""},
-            "prior_cases": {"id": "prior_cases", "title": "Prior Cases", "content": ""},
-            "account_info": {"id": "account_info", "title": "Account Information", "content": ""},
-            "subject_info": {"id": "subject_info", "title": "Subject Information", "content": ""},
-            "activity_summary": {"id": "activity_summary", "title": "Activity Summary", "content": ""},
-            "transaction_samples": {"id": "transaction_samples", "title": "Sample Transactions", "content": ""},
-            "conclusion": {"id": "conclusion", "title": "Conclusion", "content": ""}
-        }
-    
-    paragraphs = narrative.split('\n\n')
-    
-    # Define default sections
-    sections = {
-        "introduction": {
-            "id": "introduction",
-            "title": "Introduction",
-            "content": paragraphs[0] if len(paragraphs) > 0 else ""
-        },
-        "prior_cases": {
-            "id": "prior_cases",
-            "title": "Prior Cases",
-            "content": paragraphs[1] if len(paragraphs) > 1 else ""
-        },
-        "account_info": {
-            "id": "account_info",
-            "title": "Account Information",
-            "content": paragraphs[2] if len(paragraphs) > 2 else ""
-        },
-        "subject_info": {
-            "id": "subject_info",
-            "title": "Subject Information",
-            "content": paragraphs[3] if len(paragraphs) > 3 else ""
-        },
-        "activity_summary": {
-            "id": "activity_summary",
-            "title": "Activity Summary",
-            "content": paragraphs[4] if len(paragraphs) > 4 else ""
-        },
-        "transaction_samples": {
-            "id": "transaction_samples",
-            "title": "Sample Transactions",
-            "content": paragraphs[5] if len(paragraphs) > 5 else ""
-        },
-        "conclusion": {
-            "id": "conclusion",
-            "title": "Conclusion",
-            "content": paragraphs[6] if len(paragraphs) > 6 else ""
-        }
-    }
-    
-    return sections
-
-def rebuild_narrative(sections):
-    """
-    Rebuild the full narrative from sections using new section IDs
-    
-    Args:
-        sections: Dictionary of narrative sections
-        
-    Returns:
-        str: Complete narrative
-    """
-    from backend.generators.narrative_generator import SECTION_IDS
-    
-    ordered_sections = [
-        sections.get(SECTION_IDS["SUSPICIOUS_ACTIVITY_SUMMARY"], {}).get("content", ""),
-        sections.get(SECTION_IDS["PRIOR_CASES"], {}).get("content", ""),
-        sections.get(SECTION_IDS["ACCOUNT_SUBJECT_INFO"], {}).get("content", ""),
-        sections.get(SECTION_IDS["SUSPICIOUS_ACTIVITY_ANALYSIS"], {}).get("content", ""),
-        sections.get(SECTION_IDS["CONCLUSION"], {}).get("content", "")
-    ]
-    
-    return "\n\n".join([section for section in ordered_sections if section])
-
-        
-@app.route('/api/regenerate-prior-cases/<session_id>', methods=['POST'])
-def regenerate_prior_cases(session_id):
-    """
-    Regenerate prior cases summary for a session
-    """
-    # Validate session ID to prevent directory traversal
-    if not re.match(r'^[0-9a-f\-]+$', session_id):
-        return jsonify({
-            "status": "error",
-            "message": "Invalid session ID format"
-        }), 400
-    
-    data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
-    
-    if not os.path.exists(data_path):
-        return jsonify({
-            "status": "error",
-            "message": "Session not found"
-        }), 404
-    
-    try:
-        data = load_from_json_file(data_path)
-        
-        # Get prior cases from session data
-        prior_cases = data.get("prior_cases", [])
-        
-        # If prior cases aren't already extracted, get them
-        if not prior_cases:
-            # Get case number
-            case_number = ""
-            if "case_data" in data:
-                case_number = data["case_data"].get("case_number", "")
-            
-            # Get the original, raw case data
-            raw_case_data = get_full_case(case_number)
-            
-            if not raw_case_data:
-                return jsonify({
-                    "status": "error",
-                    "message": "Case data not found"
-                }), 404
-                
-            # Extract prior cases information directly from the raw case data
-            prior_cases = extract_prior_cases_summary(raw_case_data)
-            
-            # Store prior cases in session data
-            data["prior_cases"] = prior_cases
-            save_to_json_file(data, data_path)
-        
-        # Generate prompt for LLM
-        prompt = generate_prior_cases_prompt(prior_cases)
-        
-        # Initialize LLM client
-        llm_client = LLMClient()
-        
-        # Generate the new summary
-        generated_summary = llm_client.generate_content(prompt, max_tokens=600, temperature=0.2)
-        
-        # Update recommendation with generated summary
-        if "recommendation" not in data:
-            data["recommendation"] = {}
-        
-        data["recommendation"]["prior_sars"] = generated_summary
-        save_to_json_file(data, data_path)
-        
-        # Create the response data
-        response_data = {
-            "status": "success",
-            "priorCases": prior_cases,
-            "prompt": prompt,
-            "generatedSummary": generated_summary
-        }
-        
-        return jsonify(response_data), 200
-        
-    except Exception as e:
-        logger.error(f"Error regenerating prior cases summary: {str(e)}")
-        return jsonify({
-            "status": "error",
-            "message": f"Error regenerating prior cases summary: {str(e)}"
-        }), 500        
-
-
-@app.route('/api/prior-cases/<session_id>', methods=['GET'])
-def get_prior_cases_summary(session_id):
-    """
-    Get prior cases summary for a session - with improved error handling
-    """
-    # Validate session ID to prevent directory traversal
-    if not re.match(r'^[0-9a-f\-]+$', session_id):
-        return jsonify({
-            "status": "error",
-            "message": "Invalid session ID format"
-        }), 400
-    
-    data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
-    
-    if not os.path.exists(data_path):
-        return jsonify({
-            "status": "error",
-            "message": "Session not found"
-        }), 404
-    
-    try:
-        # Check file size first to avoid trying to read empty files
-        if os.path.getsize(data_path) == 0:
-            logger.warning(f"Empty data file found: {data_path}")
-            return jsonify({
-                "status": "success",
-                "message": "Empty data file - no prior cases",
-                "priorCases": [],
-                "prompt": "Write a brief summary stating that no prior SARs were identified for this account or customer.",
-                "generatedSummary": "No prior SARs were identified for the subjects or account."
-            }), 200
-            
-        # Read and parse data
-        try:
-            data = load_from_json_file(data_path)
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON decode error in file {data_path}: {str(e)}")
-            return jsonify({
-                "status": "success",
-                "message": f"Invalid JSON in data file: {str(e)}",
-                "priorCases": [],
-                "prompt": "Write a brief summary stating that no prior SARs were identified for this account or customer.",
-                "generatedSummary": "No prior SARs were identified for the subjects or account."
-            }), 200
-        
-        # Rest of the function remains the same...
-        # Get case number from the data
-        case_number = ""
-        if "case_data" in data:
-            case_number = data["case_data"].get("case_number", "")
-        
-        # First, try to get prior cases from session data if already processed
-        prior_cases = data.get("prior_cases", [])
-        
-        # If prior cases aren't in the session data, try to get them from the raw case data
-        if not prior_cases and "case_data" in data and "full_data" in data["case_data"]:
-            raw_case_data = data["case_data"]["full_data"]
-            prior_cases = extract_prior_cases_summary(raw_case_data)
-            
-            # Store prior cases in session data for future use
-            data["prior_cases"] = prior_cases
-            save_to_json_file(data, data_path)
-        
-        # If still no prior cases, try to get them from the case repository
-        if not prior_cases:
-            raw_case_data = get_full_case(case_number)
-            if raw_case_data:
-                prior_cases = extract_prior_cases_summary(raw_case_data)
-                
-                # Store prior cases in session data
-                data["prior_cases"] = prior_cases
-                save_to_json_file(data, data_path)
-        
-        # Generate prompt for LLM
-        prompt = generate_prior_cases_prompt(prior_cases)
-        
-        # Try to get a generated summary from the recommendation data
-        generated_summary = ""
-        if "recommendation" in data and "prior_sars" in data["recommendation"]:
-            generated_summary = data["recommendation"]["prior_sars"]
-        
-        # If no generated summary exists, generate one using LLM
-        if not generated_summary and prior_cases:
-            try:
-                # Initialize LLM client
-                llm_client = LLMClient()
-                
-                # Generate the new summary
-                generated_summary = llm_client.generate_content(prompt, max_tokens=600, temperature=0.2)
-                
-                # Update recommendation with generated summary
-                if "recommendation" not in data:
-                    data["recommendation"] = {}
-                
-                data["recommendation"]["prior_sars"] = generated_summary
-                save_to_json_file(data, data_path)
-            except Exception as e:
-                logger.error(f"Error generating prior cases summary: {str(e)}", exc_info=True)
-                generated_summary = "Error generating summary. Please try regenerating the section."
-        
-        # Create the response data (without the sanitize_for_json function)
-        response_data = {
-            "status": "success",
-            "priorCases": prior_cases,  # Removed call to simplify_prior_cases
-            "prompt": prompt,
-            "generatedSummary": generated_summary
-        }
-        
-        return jsonify(response_data), 200
-        
-    except Exception as e:
-        logger.error(f"Error fetching prior cases summary: {str(e)}", exc_info=True)
-        return jsonify({
-            "status": "success",  # Still return success to prevent UI issues
-            "message": f"Error fetching prior cases summary: {str(e)}",
-            "priorCases": [],
-            "prompt": "Write a brief summary stating that no prior SARs were identified for this account or customer.",
-            "generatedSummary": "No prior SARs were identified for the subjects or account."
-        }), 200
-        
-def simplify_prior_cases(prior_cases):
-    """
-    Create a simplified version of prior cases to avoid JSON issues
-    """
-    simplified = []
-    
-    for case in prior_cases:
-        simple_case = {
-            "case_number": str(case.get("case_number", "")),
-            "case_step": str(case.get("case_step", "")),
-            "alert_ids": [str(aid) for aid in case.get("alert_ids", [])],
-            "alert_months": [str(month) for month in case.get("alert_months", [])],
-            "alerting_account": str(case.get("alerting_account", "")),
-            "scope_of_review": {
-                "start": str(case.get("scope_of_review", {}).get("start", "")),
-                "end": str(case.get("scope_of_review", {}).get("end", ""))
-            },
-            "sar_details": {
-                "form_number": str(case.get("sar_details", {}).get("form_number", "")),
-                "filing_date": str(case.get("sar_details", {}).get("filing_date", "")),
-                "amount_reported": float(case.get("sar_details", {}).get("amount_reported", 0) or 0)
-            },
-            "general_comments": str(case.get("general_comments", ""))[:1000]  # Truncate long comments
-        }
-        simplified.append(simple_case)
-    
-    return simplified
 
 if __name__ == '__main__':
     # Check which variables exist in config for host and port

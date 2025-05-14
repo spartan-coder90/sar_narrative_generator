@@ -34,24 +34,15 @@ const SectionEditor: React.FC<SectionEditorProps> = ({
     generatedSummary && !section.content ? generatedSummary : section.content || ''
   );
   
-  // For debugging - log when props change
-  useEffect(() => {
-    console.log(`SectionEditor props update for ${section.id}:`);
-    console.log(`- section.content: ${section.content?.substring(0, 30)}...`);
-    console.log(`- generatedSummary: ${generatedSummary?.substring(0, 30)}...`);
-  }, [section.id, section.content, generatedSummary]);
-  
   // Update local content when section changes or when generatedSummary arrives
   useEffect(() => {
     // If we have a generated summary and no content yet, use the generated summary
     if (generatedSummary && !section.content) {
-      console.log(`Setting content to generatedSummary for ${section.id}`);
       setContent(generatedSummary);
       // Also call onChange to update parent component
       onChange(generatedSummary);
     } else if (section.content) {
       // If we have section content, use that (user might have edited it)
-      console.log(`Setting content to section.content for ${section.id}`);
       setContent(section.content);
     }
   }, [section.id, section.content, generatedSummary, onChange]);
@@ -110,21 +101,29 @@ const SectionEditor: React.FC<SectionEditorProps> = ({
   };
   
   // Get help text based on section ID
-  const getHelpText = (sectionId: string, isRecommendation: boolean): string => {
-    if (isRecommendation) {
-      // Recommendation section help text...
-    } else {
-      // Narrative section help text based on new section IDs
-      const narrativeHelpText: Record<string, string> = {
-        [NARRATIVE_SECTION_IDS.SUSPICIOUS_ACTIVITY_SUMMARY]: "Summary of unusual activity including transaction types, totals, dates, and AML indicators.",
-        [NARRATIVE_SECTION_IDS.PRIOR_CASES]: "Summarize any relevant prior cases or SARs including case/SAR numbers, review periods, and filing details.",
-        [NARRATIVE_SECTION_IDS.ACCOUNT_SUBJECT_INFO]: "Summary of account details and account holders. Include foreign nationalities and IDs if applicable.",
-        [NARRATIVE_SECTION_IDS.SUSPICIOUS_ACTIVITY_ANALYSIS]: "Detailed analysis of unusual activity identified in transaction data including AML risk indicators.",
-        [NARRATIVE_SECTION_IDS.CONCLUSION]: "Conclusion statement with contact information for supporting documentation."
-      };
-      
-      return narrativeHelpText[sectionId] || "";
-    }
+  const getHelpText = (sectionId: string): string => {
+    // Narrative section help text based on new section IDs
+    const narrativeHelpText: Record<string, string> = {
+      [NARRATIVE_SECTION_IDS.SUSPICIOUS_ACTIVITY_SUMMARY]: "Summary of unusual activity including transaction types, totals, dates, and AML indicators.",
+      [NARRATIVE_SECTION_IDS.PRIOR_CASES]: "Summarize any relevant prior cases or SARs including case/SAR numbers, review periods, and filing details.",
+      [NARRATIVE_SECTION_IDS.ACCOUNT_SUBJECT_INFO]: "Summary of account details and account holders. Include foreign nationalities and IDs if applicable.",
+      [NARRATIVE_SECTION_IDS.SUSPICIOUS_ACTIVITY_ANALYSIS]: "Detailed analysis of unusual activity identified in transaction data including AML risk indicators.",
+      [NARRATIVE_SECTION_IDS.CONCLUSION]: "Conclusion statement with contact information for supporting documentation."
+    };
+    
+    // Recommendation section help text
+    const recommendationHelpText: Record<string, string> = {
+      "alerting_activity": "Summarize what triggered the alert and why the case was selected for review.",
+      "prior_sars": "List any prior SARs filed on this subject or account.",
+      "scope_of_review": "Specify the date range that was reviewed for this case.",
+      "investigation_summary": "Describe the investigation findings, red flags, and supporting evidence.",
+      "conclusion": "Provide the final recommendation with specific activity details.",
+      "cta": "Detail any Customer Transaction Assessment details and questions.",
+      "bip": "Detail any Business in Personal details and questions.",
+      "retain_close": "Indicate whether customer relationships should be retained or closed."
+    };
+    
+    return narrativeHelpText[sectionId] || recommendationHelpText[sectionId] || "";
   };
 
   const getTemplateText = (sectionId: string) => {
@@ -133,9 +132,14 @@ const SectionEditor: React.FC<SectionEditorProps> = ({
       'prior_cases': 'Case # [case number]: Alerting account # [account number] reviewed from [start date] to [end date] due to [alerting activity]. SAR ID reported account # [account number] for activity totaling $[amount] conducted from [start date] to [end date]. [SAR summary]',
       'account_subject_info': 'Personal [account type] account [account number] was opened on [date] and [remains open/was closed on [date]]. The account was closed due to [closure reason]. The account closure funds were moved to [destination] on [date] via [method]. The following foreign nationalities and identifications were identified for [subject name]: [nationality], [ID type] # [ID number] issued on [issue date] and expires on [expiration date].',
       'suspicious_activity_analysis': 'The suspicious activity identified in account [account number] was conducted from [start date] to [end date] and consisted of [transaction types and amounts]. The AML risks associated with these transactions are as follows: [risk indicators].',
-      'conclusion': 'In conclusion, USB will conduct a follow-up review to monitor for continuing activity. All requests for supporting documentation can be sent to lawenforcementrequestaml@usbank.com referencing AML case number [case number].',
+      'reccomendation_conclusion': 'In conclusion, USB will conduct a follow-up review to monitor for continuing activity. All requests for supporting documentation can be sent to lawenforcementrequestaml@usbank.com referencing AML case number [case number].',
       'alerting_activity': 'Case [case number]: [Account type] and [account number] alerted in [alert month] for [alert description]. Credits totaled [amount] with [transaction types]. Debits totaled [amount] with [transaction types].',
       'prior_sars': 'Prior SARs: [Case number] filed on [filing date] reporting [description]. No prior SARs were identified for the subjects or account.',
+      'scope_of_review': 'Accounts were reviewed from [Start Date] to [End Date]. Account [Account Number] was opened on [Open Date].',
+      'investigation_summary': 'Account [Account Number] consisted of the following top credit activity: [credit types with amounts]. Account [Account Number] consisted of the following top debit activity: [debit types with amounts]. The alerting or significant identified transactions consisted of [transaction type] conducted from [date range] totaling [amount].',
+      'sar_conclusion': 'In conclusion a SAR is recommended to report unusual [Activity Type] activity involving USB accounts [Account Number] and subjects [Subject Names]. The unusual activity totaled [Total Amount] [Derived From] between [Start Date] and [End Date].',
+      'cta': 'Account [account number], held by [signers], was reviewed from [start date] to [end date] and identified potentially unusual activity conducted from [activity start date] to [activity end date] which totaled [total amount]. The activity consisted of [transaction types and amounts].',
+      'retain_close': 'Retain Customer Relationship(s): Accounts and relationships related to [Subject Name] are recommended to remain open.',
     };
     
     return templates[sectionId] || '';
@@ -156,13 +160,6 @@ const SectionEditor: React.FC<SectionEditorProps> = ({
       maximumFractionDigits: 2
     }).format(amount);
   };
-  
-  // Use this to log the generated content for debugging
-  useEffect(() => {
-    if (section.id === 'alerting_activity' || section.id === 'prior_sars') {
-      console.log(`${section.id} - generatedSummary: ${generatedSummary?.substring(0, 50)}...`);
-    }
-  }, [section.id, generatedSummary]);
   
   // Render specialized content based on section type
   const renderSpecializedContent = () => {
@@ -296,12 +293,6 @@ const SectionEditor: React.FC<SectionEditorProps> = ({
                             <th>SAR Amount</th>
                             <td>{formatCurrency(priorCase.sar_details.amount_reported || 0)}</td>
                           </tr>
-                          {priorCase.sar_details.filing_date_start && priorCase.sar_details.filing_date_end && (
-                            <tr>
-                              <th>SAR Date Range</th>
-                              <td>{priorCase.sar_details.filing_date_start} to {priorCase.sar_details.filing_date_end}</td>
-                            </tr>
-                          )}
                         </>
                       )}
                       {priorCase.general_comments && (
@@ -351,18 +342,6 @@ const SectionEditor: React.FC<SectionEditorProps> = ({
             </ButtonGroup>
           </Col>
         </Row>
-        
-        {/* Add debugging info in development only */}
-        {process.env.NODE_ENV === 'development' && section.id === 'prior_sars' && (
-          <div className="mb-2 p-2 bg-light">
-            <strong>Debug - Generated Summary Available:</strong> {generatedSummary ? 'Yes' : 'No'}
-            {generatedSummary && (
-              <div className="mt-1 small">
-                <strong>First 80 chars:</strong> {generatedSummary.substring(0, 80)}...
-              </div>
-            )}
-          </div>
-        )}
         
         <Form.Control
           id="section-editor"

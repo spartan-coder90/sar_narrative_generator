@@ -1,13 +1,19 @@
 """
-Updated SAR Narrative Generator with sections aligned to requirements document
+Module for generating Suspicious Activity Report (SAR) narratives and recommendations.
+
+This module defines the `NarrativeGenerator` class, which takes processed case data
+and utilizes an LLM client (or fallback templating) to construct various sections
+of a SAR narrative and associated recommendation components. It includes methods for
+formatting data (currency, dates, subject lists) and generating each specific section
+required for a complete SAR report.
 """
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional
 import re
 from datetime import datetime
 import json
 
 from backend.utils.logger import get_logger
-from backend.config import TEMPLATES, ACTIVITY_TYPES, SAR_TEMPLATE, AML_RISK_INDICATORS
+from backend.config import ACTIVITY_TYPES # Removed TEMPLATES, SAR_TEMPLATE, AML_RISK_INDICATORS
 
 logger = get_logger(__name__)
 
@@ -50,20 +56,6 @@ class NarrativeGenerator:
         else:
             self.llm_client = llm_client
         self.activity_type = None
-    
-    def determine_activity_type(self) -> Dict[str, Any]:
-        """
-        Determine type of suspicious activity
-        
-        Returns:
-            Dict: Activity type information
-        """
-        if self.activity_type:
-            return self.activity_type
-        
-        # Use the LLM client's method to determine activity type
-        self.activity_type = self.llm_client.determine_activity_type(self.data)
-        return self.activity_type
     
     def format_currency(self, amount: Any) -> str:
         """
@@ -185,7 +177,9 @@ class NarrativeGenerator:
             str: Suspicious activity summary section
         """
         # Get required data
-        activity_type = self.determine_activity_type() or {}
+        if not self.activity_type:
+            self.activity_type = self.llm_client.determine_activity_type(self.data)
+        activity_type = self.activity_type or {}
         account_info = self.data.get("account_info", {})
         activity_summary = self.data.get("activity_summary", {})
         
@@ -446,7 +440,9 @@ class NarrativeGenerator:
                 transaction_types_text += ", ".join(debit_types)
         
         # Get AML risks
-        activity_type = self.determine_activity_type() or {}
+        if not self.activity_type:
+            self.activity_type = self.llm_client.determine_activity_type(self.data)
+        activity_type = self.activity_type or {}
         aml_risks = activity_type.get("indicators", ["suspicious transactions"])
         aml_risks_text = ", ".join(aml_risks)
         
@@ -810,7 +806,9 @@ class NarrativeGenerator:
         """
         account_info = self.data.get("account_info", {})
         subjects = self.data.get("subjects", [])
-        activity_type = self.determine_activity_type()
+        if not self.activity_type:
+            self.activity_type = self.llm_client.determine_activity_type(self.data)
+        activity_type = self.activity_type or {} # Ensure activity_type is a dict
         unusual_activity = self.data.get("unusual_activity", {})
         
         # Create a direct prompt for recommendation conclusion

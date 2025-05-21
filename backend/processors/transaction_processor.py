@@ -1,10 +1,20 @@
 """
-Transaction processor for extracting and calculating transaction summaries from case data
+Module for processing transaction data from raw case information.
+
+This module defines the `TransactionProcessor` class, which is responsible for
+extracting, structuring, and calculating various transaction summaries from the
+`full_data` section of a case object. These summaries are essential for
+populating different parts of a SAR narrative and recommendation. The processor
+handles aggregation of credits and debits, identifies counterparties, details
+individual transactions, and samples unusual activities, CTA (Customer Transaction
+Assessment), and BIP (Business Intelligence Profile) transactions.
+It utilizes utility functions for data type conversions and date comparisons.
 """
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional
 import re
 from datetime import datetime
 from backend.utils.logger import get_logger
+from backend.utils.data_utils import to_float, to_int, compare_dates
 
 logger = get_logger(__name__)
 
@@ -72,6 +82,57 @@ class TransactionProcessor:
         
         # Store the transaction data
         self.transaction_data = transactions
+
+    def _initialize_summary_dict(self) -> Dict[str, Any]:
+        """
+        Initializes a dictionary with a common structure for credit/debit summaries.
+        """
+        return {
+            "total_percent": 0,
+            "total_amount": 0,
+            "total_transactions": 0,
+            "min_amount": float('inf'),
+            "max_amount": 0,
+            "earliest_date": None,
+            "latest_date": None
+        }
+
+    def _initialize_transaction_group(self, for_counterparty: bool = False, for_details: bool = False, for_unusual: bool = False) -> Dict[str, Any]:
+        """
+        Initializes a dictionary for grouping transactions by type or party.
+        Structure can vary slightly based on the context (activity, counterparty, details, unusual).
+        """
+        group = {
+            "amount": 0,
+            "count": 0,
+        }
+        if for_counterparty: # Used in _get_counterparties
+            group["percent"] = 0
+            group["min_amount"] = float('inf')
+            group["max_amount"] = 0
+            group["min_date"] = None
+            group["max_date"] = None
+        elif for_details: # Used in _get_transaction_details
+            group["credits"] = {"amount": 0, "count": 0}
+            group["debits"] = {"amount": 0, "count": 0}
+            group["total"] = 0 # total amount for this group
+            # 'count' here will be total transactions for this group
+            group["examples"] = []
+        elif for_unusual: # Used in _get_unusual_activity, _get_cta_sample, _get_bip_sample
+            group["credits"] = {"amount": 0, "count": 0}
+            group["debits"] = {"amount": 0, "count": 0}
+            group["total"] = 0 # total amount for this group
+            # 'count' here will be total transactions for this group
+            group["earliest_date"] = None
+            group["latest_date"] = None
+            group["examples"] = []
+        else: # Default for _get_activity_summary by_type
+            group["percent"] = 0
+            group["min_amount"] = float('inf')
+            group["max_amount"] = 0
+            group["min_date"] = None
+            group["max_date"] = None
+        return group
     
     def _get_scope_of_review(self) -> Dict[str, str]:
         """
@@ -149,197 +210,119 @@ class TransactionProcessor:
         activity_summary = {
             "accounts": {},
             "totals": {
-                "credits": {
-                    "total_percent": 0,
-                    "total_amount": 0,
-                    "total_transactions": 0,
-                    "min_amount": float('inf'),
-                    "max_amount": 0,
-                    "earliest_date": None,
-                    "latest_date": None
-                },
-                "debits": {
-                    "total_percent": 0,
-                    "total_amount": 0,
-                    "total_transactions": 0,
-                    "min_amount": float('inf'),
-                    "max_amount": 0,
-                    "earliest_date": None,
-                    "latest_date": None
-                }
+                "credits": self._initialize_summary_dict(),
+                "debits": self._initialize_summary_dict()
             }
         }
         
-        # Try to find Activity Summary in full_data
+        # Try to find Activity Summary in full_data. This section typically contains aggregated
+        # transaction data per account, broken down by credit and debit types.
         for section in self.case_data.get("full_data", []):
             if "Activity Summary" in section:
-                summary_list = section.get("Activity Summary", [])
+                summary_list = section.get("Activity Summary", []) # Data is usually a list of account summaries
                 if isinstance(summary_list, list):
-                    for account_summary in summary_list:
-                        account_num = str(account_summary.get("Account", ""))
+                    for account_summary_item in summary_list: # Each item represents one account's summary
+                        account_num = str(account_summary_item.get("Account", "")) # Get account number
                         
-                        # Initialize account entry
+                        # Initialize account entry if it's the first time seeing this account
                         if account_num not in activity_summary["accounts"]:
                             activity_summary["accounts"][account_num] = {
-                                "credits": {
-                                    "by_type": {},
-                                    "total_percent": 0,
-                                    "total_amount": 0,
-                                    "total_transactions": 0,
-                                    "min_amount": float('inf'),
-                                    "max_amount": 0,
-                                    "earliest_date": None,
-                                    "latest_date": None
-                                },
-                                "debits": {
-                                    "by_type": {},
-                                    "total_percent": 0,
-                                    "total_amount": 0,
-                                    "total_transactions": 0,
-                                    "min_amount": float('inf'),
-                                    "max_amount": 0,
-                                    "earliest_date": None,
-                                    "latest_date": None
-                                }
+                                "credits": self._initialize_summary_dict(),
+                                "debits": self._initialize_summary_dict()
                             }
+                            # Add 'by_type' structure for credits and debits within this account
+                            activity_summary["accounts"][account_num]["credits"]["by_type"] = {}
+                            activity_summary["accounts"][account_num]["debits"]["by_type"] = {}
                         
                         # Process credits for this account
-                        credits = account_summary.get("Credits", [])
-                        for credit in credits:
-                            # Extract values with proper type handling
-                            custom_language = credit.get("Custom Language", "")
-                            percent = self._to_float(credit.get("% of Credits", 0))
-                            amount = self._to_float(credit.get("Total ", 0))
-                            count = self._to_int(credit.get("# Transactions ", 0))
-                            min_amount = self._to_float(credit.get("Min Credit Amt.", 0))
-                            max_amount = self._to_float(credit.get("Max Credit Amt.", 0))
-                            min_date = credit.get("Min Txn Date ", "")
-                            max_date = credit.get("Max Txn Date ", "")
+                        credits_data = account_summary_item.get("Credits", []) # Credits are usually a list
+                        for credit_item in credits_data:
+                            # Extract credit transaction details. Key names like "Total " (with space)
+                            # are specific to the input data format.
+                            custom_language = credit_item.get("Custom Language", "") # Type of credit
+                            percent = to_float(credit_item.get("% of Credits", 0))
+                            amount = to_float(credit_item.get("Total ", 0)) # Note the space in "Total "
+                            count = to_int(credit_item.get("# Transactions ", 0)) # Note the space
+                            min_amount_txn = to_float(credit_item.get("Min Credit Amt.", 0))
+                            max_amount_txn = to_float(credit_item.get("Max Credit Amt.", 0))
+                            min_date_txn = credit_item.get("Min Txn Date ", "") # Note the space
+                            max_date_txn = credit_item.get("Max Txn Date ", "") # Note the space
                             
-                            # Add to account's by_type data
-                            account_credits = activity_summary["accounts"][account_num]["credits"]
-                            if custom_language not in account_credits["by_type"]:
-                                account_credits["by_type"][custom_language] = {
-                                    "percent": percent,
-                                    "amount": amount,
-                                    "count": count,
-                                    "min_amount": min_amount,
-                                    "max_amount": max_amount,
-                                    "min_date": min_date,
-                                    "max_date": max_date
-                                }
-                            else:
-                                # Add to existing values
-                                type_data = account_credits["by_type"][custom_language]
-                                type_data["percent"] += percent
-                                type_data["amount"] += amount
-                                type_data["count"] += count
-                                type_data["min_amount"] = min(type_data["min_amount"], min_amount)
-                                type_data["max_amount"] = max(type_data["max_amount"], max_amount)
-                                
-                                # Update dates if needed
-                                if self._compare_dates(min_date, type_data["min_date"]) < 0:
-                                    type_data["min_date"] = min_date
-                                if self._compare_dates(max_date, type_data["max_date"]) > 0:
-                                    type_data["max_date"] = max_date
+                            account_credits_summary = activity_summary["accounts"][account_num]["credits"]
+                            # Initialize this credit type if not seen before for this account
+                            if custom_language not in account_credits_summary["by_type"]:
+                                account_credits_summary["by_type"][custom_language] = self._initialize_transaction_group()
                             
-                            # Add to account summary totals
-                            account_credits["total_percent"] += percent
-                            account_credits["total_amount"] += amount
-                            account_credits["total_transactions"] += count
-                            account_credits["min_amount"] = min(account_credits["min_amount"], min_amount)
-                            account_credits["max_amount"] = max(account_credits["max_amount"], max_amount)
+                            # Aggregate data for this specific credit type
+                            type_data_agg = account_credits_summary["by_type"][custom_language]
+                            type_data_agg["percent"] += percent
+                            type_data_agg["amount"] += amount
+                            type_data_agg["count"] += count
+                            type_data_agg["min_amount"] = min(type_data_agg["min_amount"], min_amount_txn)
+                            type_data_agg["max_amount"] = max(type_data_agg["max_amount"], max_amount_txn)
+                            type_data_agg["min_date"] = compare_dates(min_date_txn, type_data_agg["min_date"], mode='earliest')
+                            type_data_agg["max_date"] = compare_dates(max_date_txn, type_data_agg["max_date"], mode='latest')
                             
-                            # Update dates
-                            if account_credits["earliest_date"] is None or self._compare_dates(min_date, account_credits["earliest_date"]) < 0:
-                                account_credits["earliest_date"] = min_date
-                            if account_credits["latest_date"] is None or self._compare_dates(max_date, account_credits["latest_date"]) > 0:
-                                account_credits["latest_date"] = max_date
+                            # Aggregate data for overall credits for this account
+                            account_credits_summary["total_percent"] += percent
+                            account_credits_summary["total_amount"] += amount
+                            account_credits_summary["total_transactions"] += count
+                            account_credits_summary["min_amount"] = min(account_credits_summary["min_amount"], min_amount_txn)
+                            account_credits_summary["max_amount"] = max(account_credits_summary["max_amount"], max_amount_txn)
+                            account_credits_summary["earliest_date"] = compare_dates(min_date_txn, account_credits_summary["earliest_date"], mode='earliest')
+                            account_credits_summary["latest_date"] = compare_dates(max_date_txn, account_credits_summary["latest_date"], mode='latest')
                             
-                            # Add to global totals
-                            global_credits = activity_summary["totals"]["credits"]
-                            global_credits["total_percent"] += percent
-                            global_credits["total_amount"] += amount
-                            global_credits["total_transactions"] += count
-                            if min_amount < global_credits["min_amount"]:
-                                global_credits["min_amount"] = min_amount
-                            if max_amount > global_credits["max_amount"]:
-                                global_credits["max_amount"] = max_amount
-                            
-                            # Update global dates
-                            if global_credits["earliest_date"] is None or self._compare_dates(min_date, global_credits["earliest_date"]) < 0:
-                                global_credits["earliest_date"] = min_date
-                            if global_credits["latest_date"] is None or self._compare_dates(max_date, global_credits["latest_date"]) > 0:
-                                global_credits["latest_date"] = max_date
+                            # Aggregate data for global credit totals across all accounts
+                            global_credits_summary = activity_summary["totals"]["credits"]
+                            global_credits_summary["total_percent"] += percent # Note: total_percent sum might exceed 100 if summing percentages from different base totals
+                            global_credits_summary["total_amount"] += amount
+                            global_credits_summary["total_transactions"] += count
+                            global_credits_summary["min_amount"] = min(global_credits_summary["min_amount"], min_amount_txn)
+                            global_credits_summary["max_amount"] = max(global_credits_summary["max_amount"], max_amount_txn)
+                            global_credits_summary["earliest_date"] = compare_dates(min_date_txn, global_credits_summary["earliest_date"], mode='earliest')
+                            global_credits_summary["latest_date"] = compare_dates(max_date_txn, global_credits_summary["latest_date"], mode='latest')
                         
-                        # Process debits for this account
-                        debits = account_summary.get("Debits", [])
-                        for debit in debits:
-                            # Extract values with proper type handling
-                            custom_language = debit.get("Custom Language", "")
-                            percent = self._to_float(debit.get("% of Debits", 0))
-                            amount = self._to_float(debit.get("Total ", 0))
-                            count = self._to_int(debit.get("# Transactions ", 0))
-                            min_amount = self._to_float(debit.get("Min Debit Amt.", 0))
-                            max_amount = self._to_float(debit.get("Max Debit Amt.", 0))
-                            min_date = debit.get("Min Txn Date ", "")
-                            max_date = debit.get("Max Txn Date ", "")
+                        # Process debits for this account (similar logic to credits)
+                        debits_data = account_summary_item.get("Debits", [])
+                        for debit_item in debits_data:
+                            custom_language = debit_item.get("Custom Language", "")
+                            percent = to_float(debit_item.get("% of Debits", 0))
+                            amount = to_float(debit_item.get("Total ", 0))
+                            count = to_int(debit_item.get("# Transactions ", 0))
+                            min_amount_txn = to_float(debit_item.get("Min Debit Amt.", 0))
+                            max_amount_txn = to_float(debit_item.get("Max Debit Amt.", 0))
+                            min_date_txn = debit_item.get("Min Txn Date ", "")
+                            max_date_txn = debit_item.get("Max Txn Date ", "")
                             
-                            # Add to account's by_type data
-                            account_debits = activity_summary["accounts"][account_num]["debits"]
-                            if custom_language not in account_debits["by_type"]:
-                                account_debits["by_type"][custom_language] = {
-                                    "percent": percent,
-                                    "amount": amount,
-                                    "count": count,
-                                    "min_amount": min_amount,
-                                    "max_amount": max_amount,
-                                    "min_date": min_date,
-                                    "max_date": max_date
-                                }
-                            else:
-                                # Add to existing values
-                                type_data = account_debits["by_type"][custom_language]
-                                type_data["percent"] += percent
-                                type_data["amount"] += amount
-                                type_data["count"] += count
-                                type_data["min_amount"] = min(type_data["min_amount"], min_amount)
-                                type_data["max_amount"] = max(type_data["max_amount"], max_amount)
+                            account_debits_summary = activity_summary["accounts"][account_num]["debits"]
+                            if custom_language not in account_debits_summary["by_type"]:
+                                account_debits_summary["by_type"][custom_language] = self._initialize_transaction_group()
                                 
-                                # Update dates if needed
-                                if self._compare_dates(min_date, type_data["min_date"]) < 0:
-                                    type_data["min_date"] = min_date
-                                if self._compare_dates(max_date, type_data["max_date"]) > 0:
-                                    type_data["max_date"] = max_date
+                            type_data_agg = account_debits_summary["by_type"][custom_language]
+                            type_data_agg["percent"] += percent
+                            type_data_agg["amount"] += amount
+                            type_data_agg["count"] += count
+                            type_data_agg["min_amount"] = min(type_data_agg["min_amount"], min_amount_txn)
+                            type_data_agg["max_amount"] = max(type_data_agg["max_amount"], max_amount_txn)
+                            type_data_agg["min_date"] = compare_dates(min_date_txn, type_data_agg["min_date"], mode='earliest')
+                            type_data_agg["max_date"] = compare_dates(max_date_txn, type_data_agg["max_date"], mode='latest')
                             
-                            # Add to account summary totals
-                            account_debits["total_percent"] += percent
-                            account_debits["total_amount"] += amount
-                            account_debits["total_transactions"] += count
-                            account_debits["min_amount"] = min(account_debits["min_amount"], min_amount)
-                            account_debits["max_amount"] = max(account_debits["max_amount"], max_amount)
+                            account_debits_summary["total_percent"] += percent
+                            account_debits_summary["total_amount"] += amount
+                            account_debits_summary["total_transactions"] += count
+                            account_debits_summary["min_amount"] = min(account_debits_summary["min_amount"], min_amount_txn)
+                            account_debits_summary["max_amount"] = max(account_debits_summary["max_amount"], max_amount_txn)
+                            account_debits_summary["earliest_date"] = compare_dates(min_date_txn, account_debits_summary["earliest_date"], mode='earliest')
+                            account_debits_summary["latest_date"] = compare_dates(max_date_txn, account_debits_summary["latest_date"], mode='latest')
                             
-                            # Update dates
-                            if account_debits["earliest_date"] is None or self._compare_dates(min_date, account_debits["earliest_date"]) < 0:
-                                account_debits["earliest_date"] = min_date
-                            if account_debits["latest_date"] is None or self._compare_dates(max_date, account_debits["latest_date"]) > 0:
-                                account_debits["latest_date"] = max_date
-                            
-                            # Add to global totals
-                            global_debits = activity_summary["totals"]["debits"]
-                            global_debits["total_percent"] += percent
-                            global_debits["total_amount"] += amount
-                            global_debits["total_transactions"] += count
-                            if min_amount < global_debits["min_amount"]:
-                                global_debits["min_amount"] = min_amount
-                            if max_amount > global_debits["max_amount"]:
-                                global_debits["max_amount"] = max_amount
-                            
-                            # Update global dates
-                            if global_debits["earliest_date"] is None or self._compare_dates(min_date, global_debits["earliest_date"]) < 0:
-                                global_debits["earliest_date"] = min_date
-                            if global_debits["latest_date"] is None or self._compare_dates(max_date, global_debits["latest_date"]) > 0:
-                                global_debits["latest_date"] = max_date
+                            global_debits_summary = activity_summary["totals"]["debits"]
+                            global_debits_summary["total_percent"] += percent
+                            global_debits_summary["total_amount"] += amount
+                            global_debits_summary["total_transactions"] += count
+                            global_debits_summary["min_amount"] = min(global_debits_summary["min_amount"], min_amount_txn)
+                            global_debits_summary["max_amount"] = max(global_debits_summary["max_amount"], max_amount_txn)
+                            global_debits_summary["earliest_date"] = compare_dates(min_date_txn, global_debits_summary["earliest_date"], mode='earliest')
+                            global_debits_summary["latest_date"] = compare_dates(max_date_txn, global_debits_summary["latest_date"], mode='latest')
                     
                     # Clean up infinity values for min_amount
                     if activity_summary["totals"]["credits"]["min_amount"] == float('inf'):
@@ -367,197 +350,117 @@ class TransactionProcessor:
         counterparties = {
             "accounts": {},
             "totals": {
-                "credits": {
-                    "total_percent": 0,
-                    "total_amount": 0,
-                    "total_transactions": 0,
-                    "min_amount": float('inf'),
-                    "max_amount": 0,
-                    "earliest_date": None,
-                    "latest_date": None
-                },
-                "debits": {
-                    "total_percent": 0,
-                    "total_amount": 0,
-                    "total_transactions": 0,
-                    "min_amount": float('inf'),
-                    "max_amount": 0,
-                    "earliest_date": None,
-                    "latest_date": None
-                }
+                "credits": self._initialize_summary_dict(),
+                "debits": self._initialize_summary_dict()
             }
         }
         
-        # Try to find Counterparties in full_data
+        # Try to find Counterparties in full_data. This section details transactions
+        # grouped by the other party involved (sender/receiver).
         for section in self.case_data.get("full_data", []):
             if "Counterparties" in section:
-                counterparties_list = section.get("Counterparties", [])
-                if isinstance(counterparties_list, list):
-                    for account_data in counterparties_list:
-                        account_num = str(account_data.get("Account", ""))
+                counterparties_list_data = section.get("Counterparties", []) # Data is usually a list per account
+                if isinstance(counterparties_list_data, list):
+                    for account_counterparty_data in counterparties_list_data: # Each item is for one account
+                        account_num = str(account_counterparty_data.get("Account", ""))
                         
-                        # Initialize account entry
+                        # Initialize account entry if new
                         if account_num not in counterparties["accounts"]:
                             counterparties["accounts"][account_num] = {
-                                "credits": {
-                                    "parties": {},
-                                    "total_percent": 0,
-                                    "total_amount": 0,
-                                    "total_transactions": 0,
-                                    "min_amount": float('inf'),
-                                    "max_amount": 0,
-                                    "earliest_date": None,
-                                    "latest_date": None
-                                },
-                                "debits": {
-                                    "parties": {},
-                                    "total_percent": 0,
-                                    "total_amount": 0,
-                                    "total_transactions": 0,
-                                    "min_amount": float('inf'),
-                                    "max_amount": 0,
-                                    "earliest_date": None,
-                                    "latest_date": None
-                                }
+                                "credits": self._initialize_summary_dict(),
+                                "debits": self._initialize_summary_dict()
                             }
+                            # 'parties' will store data for each counterparty
+                            counterparties["accounts"][account_num]["credits"]["parties"] = {}
+                            counterparties["accounts"][account_num]["debits"]["parties"] = {}
                         
-                        # Process credits for this account
-                        credits = account_data.get("Credits", [])
-                        for credit in credits:
-                            # Extract values with proper type handling
-                            party_name = credit.get("Row Labels", "")
-                            percent = self._to_float(credit.get("% of Credits", 0))
-                            amount = self._to_float(credit.get("Total ", 0))
-                            count = self._to_int(credit.get("# Transactions ", 0))
-                            min_amount = self._to_float(credit.get("Min Credit Amt.", 0))
-                            max_amount = self._to_float(credit.get("Max Credit Amt.", 0))
-                            min_date = credit.get("Min Txn Date ", "")
-                            max_date = credit.get("Max Txn Date ", "")
+                        # Process credits for this account, grouped by counterparty
+                        credits_data = account_counterparty_data.get("Credits", [])
+                        for credit_item in credits_data:
+                            party_name = credit_item.get("Row Labels", "") # Name of the counterparty
+                            percent = to_float(credit_item.get("% of Credits", 0))
+                            amount = to_float(credit_item.get("Total ", 0))
+                            count = to_int(credit_item.get("# Transactions ", 0))
+                            min_amount_txn = to_float(credit_item.get("Min Credit Amt.", 0))
+                            max_amount_txn = to_float(credit_item.get("Max Credit Amt.", 0))
+                            min_date_txn = credit_item.get("Min Txn Date ", "")
+                            max_date_txn = credit_item.get("Max Txn Date ", "")
                             
-                            # Add to account's parties data
-                            account_credits = counterparties["accounts"][account_num]["credits"]
-                            if party_name not in account_credits["parties"]:
-                                account_credits["parties"][party_name] = {
-                                    "percent": percent,
-                                    "amount": amount,
-                                    "count": count,
-                                    "min_amount": min_amount,
-                                    "max_amount": max_amount,
-                                    "min_date": min_date,
-                                    "max_date": max_date
-                                }
-                            else:
-                                # Add to existing values
-                                party_data = account_credits["parties"][party_name]
-                                party_data["percent"] += percent
-                                party_data["amount"] += amount
-                                party_data["count"] += count
-                                party_data["min_amount"] = min(party_data["min_amount"], min_amount)
-                                party_data["max_amount"] = max(party_data["max_amount"], max_amount)
-                                
-                                # Update dates if needed
-                                if self._compare_dates(min_date, party_data["min_date"]) < 0:
-                                    party_data["min_date"] = min_date
-                                if self._compare_dates(max_date, party_data["max_date"]) > 0:
-                                    party_data["max_date"] = max_date
+                            account_credits_summary = counterparties["accounts"][account_num]["credits"]
+                            # Initialize this counterparty if not seen before for this account's credits
+                            if party_name not in account_credits_summary["parties"]:
+                                account_credits_summary["parties"][party_name] = self._initialize_transaction_group(for_counterparty=True)
                             
-                            # Add to account summary totals
-                            account_credits["total_percent"] += percent
-                            account_credits["total_amount"] += amount
-                            account_credits["total_transactions"] += count
-                            account_credits["min_amount"] = min(account_credits["min_amount"], min_amount)
-                            account_credits["max_amount"] = max(account_credits["max_amount"], max_amount)
+                            # Aggregate data for this specific counterparty (credits)
+                            party_data_agg = account_credits_summary["parties"][party_name]
+                            party_data_agg["percent"] += percent
+                            party_data_agg["amount"] += amount
+                            party_data_agg["count"] += count
+                            party_data_agg["min_amount"] = min(party_data_agg["min_amount"], min_amount_txn)
+                            party_data_agg["max_amount"] = max(party_data_agg["max_amount"], max_amount_txn)
+                            party_data_agg["min_date"] = compare_dates(min_date_txn, party_data_agg["min_date"], mode='earliest')
+                            party_data_agg["max_date"] = compare_dates(max_date_txn, party_data_agg["max_date"], mode='latest')
                             
-                            # Update dates
-                            if account_credits["earliest_date"] is None or self._compare_dates(min_date, account_credits["earliest_date"]) < 0:
-                                account_credits["earliest_date"] = min_date
-                            if account_credits["latest_date"] is None or self._compare_dates(max_date, account_credits["latest_date"]) > 0:
-                                account_credits["latest_date"] = max_date
+                            # Aggregate data for overall credits for this account
+                            account_credits_summary["total_percent"] += percent
+                            account_credits_summary["total_amount"] += amount
+                            account_credits_summary["total_transactions"] += count
+                            account_credits_summary["min_amount"] = min(account_credits_summary["min_amount"], min_amount_txn)
+                            account_credits_summary["max_amount"] = max(account_credits_summary["max_amount"], max_amount_txn)
+                            account_credits_summary["earliest_date"] = compare_dates(min_date_txn, account_credits_summary["earliest_date"], mode='earliest')
+                            account_credits_summary["latest_date"] = compare_dates(max_date_txn, account_credits_summary["latest_date"], mode='latest')
                             
-                            # Add to global totals
-                            global_credits = counterparties["totals"]["credits"]
-                            global_credits["total_percent"] += percent
-                            global_credits["total_amount"] += amount
-                            global_credits["total_transactions"] += count
-                            if min_amount < global_credits["min_amount"]:
-                                global_credits["min_amount"] = min_amount
-                            if max_amount > global_credits["max_amount"]:
-                                global_credits["max_amount"] = max_amount
-                            
-                            # Update global dates
-                            if global_credits["earliest_date"] is None or self._compare_dates(min_date, global_credits["earliest_date"]) < 0:
-                                global_credits["earliest_date"] = min_date
-                            if global_credits["latest_date"] is None or self._compare_dates(max_date, global_credits["latest_date"]) > 0:
-                                global_credits["latest_date"] = max_date
+                            # Aggregate data for global credit totals across all accounts
+                            global_credits_summary = counterparties["totals"]["credits"]
+                            global_credits_summary["total_percent"] += percent
+                            global_credits_summary["total_amount"] += amount
+                            global_credits_summary["total_transactions"] += count
+                            global_credits_summary["min_amount"] = min(global_credits_summary["min_amount"], min_amount_txn)
+                            global_credits_summary["max_amount"] = max(global_credits_summary["max_amount"], max_amount_txn)
+                            global_credits_summary["earliest_date"] = compare_dates(min_date_txn, global_credits_summary["earliest_date"], mode='earliest')
+                            global_credits_summary["latest_date"] = compare_dates(max_date_txn, global_credits_summary["latest_date"], mode='latest')
                         
-                        # Process debits for this account
-                        debits = account_data.get("Debits", [])
-                        for debit in debits:
-                            # Extract values with proper type handling
-                            party_name = debit.get("Row Labels", "")
-                            percent = self._to_float(debit.get("% of Debits", 0))
-                            amount = self._to_float(debit.get("Total ", 0))
-                            count = self._to_int(debit.get("# Transactions ", 0))
-                            min_amount = self._to_float(debit.get("Min Debit Amt.", 0))
-                            max_amount = self._to_float(debit.get("Max Debit Amt.", 0))
-                            min_date = debit.get("Min Txn Date ", "")
-                            max_date = debit.get("Max Txn Date ", "")
+                        # Process debits for this account, grouped by counterparty (similar logic to credits)
+                        debits_data = account_counterparty_data.get("Debits", [])
+                        for debit_item in debits_data:
+                            party_name = debit_item.get("Row Labels", "")
+                            percent = to_float(debit_item.get("% of Debits", 0))
+                            amount = to_float(debit_item.get("Total ", 0))
+                            count = to_int(debit_item.get("# Transactions ", 0))
+                            min_amount_txn = to_float(debit_item.get("Min Debit Amt.", 0))
+                            max_amount_txn = to_float(debit_item.get("Max Debit Amt.", 0))
+                            min_date_txn = debit_item.get("Min Txn Date ", "")
+                            max_date_txn = debit_item.get("Max Txn Date ", "")
                             
-                            # Add to account's parties data
-                            account_debits = counterparties["accounts"][account_num]["debits"]
-                            if party_name not in account_debits["parties"]:
-                                account_debits["parties"][party_name] = {
-                                    "percent": percent,
-                                    "amount": amount,
-                                    "count": count,
-                                    "min_amount": min_amount,
-                                    "max_amount": max_amount,
-                                    "min_date": min_date,
-                                    "max_date": max_date
-                                }
-                            else:
-                                # Add to existing values
-                                party_data = account_debits["parties"][party_name]
-                                party_data["percent"] += percent
-                                party_data["amount"] += amount
-                                party_data["count"] += count
-                                party_data["min_amount"] = min(party_data["min_amount"], min_amount)
-                                party_data["max_amount"] = max(party_data["max_amount"], max_amount)
-                                
-                                # Update dates if needed
-                                if self._compare_dates(min_date, party_data["min_date"]) < 0:
-                                    party_data["min_date"] = min_date
-                                if self._compare_dates(max_date, party_data["max_date"]) > 0:
-                                    party_data["max_date"] = max_date
+                            account_debits_summary = counterparties["accounts"][account_num]["debits"]
+                            if party_name not in account_debits_summary["parties"]:
+                                account_debits_summary["parties"][party_name] = self._initialize_transaction_group(for_counterparty=True)
                             
-                            # Add to account summary totals
-                            account_debits["total_percent"] += percent
-                            account_debits["total_amount"] += amount
-                            account_debits["total_transactions"] += count
-                            account_debits["min_amount"] = min(account_debits["min_amount"], min_amount)
-                            account_debits["max_amount"] = max(account_debits["max_amount"], max_amount)
+                            party_data_agg = account_debits_summary["parties"][party_name]
+                            party_data_agg["percent"] += percent
+                            party_data_agg["amount"] += amount
+                            party_data_agg["count"] += count
+                            party_data_agg["min_amount"] = min(party_data_agg["min_amount"], min_amount_txn)
+                            party_data_agg["max_amount"] = max(party_data_agg["max_amount"], max_amount_txn)
+                            party_data_agg["min_date"] = compare_dates(min_date_txn, party_data_agg["min_date"], mode='earliest')
+                            party_data_agg["max_date"] = compare_dates(max_date_txn, party_data_agg["max_date"], mode='latest')
                             
-                            # Update dates
-                            if account_debits["earliest_date"] is None or self._compare_dates(min_date, account_debits["earliest_date"]) < 0:
-                                account_debits["earliest_date"] = min_date
-                            if account_debits["latest_date"] is None or self._compare_dates(max_date, account_debits["latest_date"]) > 0:
-                                account_debits["latest_date"] = max_date
+                            account_debits_summary["total_percent"] += percent
+                            account_debits_summary["total_amount"] += amount
+                            account_debits_summary["total_transactions"] += count
+                            account_debits_summary["min_amount"] = min(account_debits_summary["min_amount"], min_amount_txn)
+                            account_debits_summary["max_amount"] = max(account_debits_summary["max_amount"], max_amount_txn)
+                            account_debits_summary["earliest_date"] = compare_dates(min_date_txn, account_debits_summary["earliest_date"], mode='earliest')
+                            account_debits_summary["latest_date"] = compare_dates(max_date_txn, account_debits_summary["latest_date"], mode='latest')
                             
-                            # Add to global totals
-                            global_debits = counterparties["totals"]["debits"]
-                            global_debits["total_percent"] += percent
-                            global_debits["total_amount"] += amount
-                            global_debits["total_transactions"] += count
-                            if min_amount < global_debits["min_amount"]:
-                                global_debits["min_amount"] = min_amount
-                            if max_amount > global_debits["max_amount"]:
-                                global_debits["max_amount"] = max_amount
-                            
-                            # Update global dates
-                            if global_debits["earliest_date"] is None or self._compare_dates(min_date, global_debits["earliest_date"]) < 0:
-                                global_debits["earliest_date"] = min_date
-                            if global_debits["latest_date"] is None or self._compare_dates(max_date, global_debits["latest_date"]) > 0:
-                                global_debits["latest_date"] = max_date
+                            global_debits_summary = counterparties["totals"]["debits"]
+                            global_debits_summary["total_percent"] += percent
+                            global_debits_summary["total_amount"] += amount
+                            global_debits_summary["total_transactions"] += count
+                            global_debits_summary["min_amount"] = min(global_debits_summary["min_amount"], min_amount_txn)
+                            global_debits_summary["max_amount"] = max(global_debits_summary["max_amount"], max_amount_txn)
+                            global_debits_summary["earliest_date"] = compare_dates(min_date_txn, global_debits_summary["earliest_date"], mode='earliest')
+                            global_debits_summary["latest_date"] = compare_dates(max_date_txn, global_debits_summary["latest_date"], mode='latest')
                     
                     # Clean up infinity values for min_amount
                     if counterparties["totals"]["credits"]["min_amount"] == float('inf'):
@@ -592,61 +495,49 @@ class TransactionProcessor:
                 "total_amount": 0,
                 "total_transactions": 0
             },
-            "grand_total": 0,
-            "transaction_count": 0
+            "grand_total": 0, # Grand total amount of all transactions
+            "transaction_count": 0 # Grand total count of all transactions
         }
         
-        # Try to find Transactions in full_data
+        # Try to find "Transactions" section in full_data. This section usually contains
+        # a flat list of all individual transactions.
         for section in self.case_data.get("full_data", []):
             if "Transactions" in section:
-                transactions_list = section.get("Transactions", [])
-                if isinstance(transactions_list, list):
-                    for transaction in transactions_list:
-                        # Extract values with proper type handling
-                        account = str(transaction.get("Account", ""))
-                        date = transaction.get("Transaction Date ", "")
-                        debit_credit = transaction.get("Debit/Credit", "")
-                        amount = self._to_float(transaction.get("Transaction Amount", 0))
-                        custom_language = transaction.get("Custom Language", "")
-                        branch = transaction.get("Branch / ATM", "")
-                        sender = transaction.get("Sender or Remitter Name", "")
-                        receiver = transaction.get("Receiver or Beneficiary Name", "")
-                        memo = transaction.get("Memo", "")
+                transactions_list_data = section.get("Transactions", [])
+                if isinstance(transactions_list_data, list):
+                    for transaction_item in transactions_list_data:
+                        # Extract individual transaction details
+                        account = str(transaction_item.get("Account", ""))
+                        date = transaction_item.get("Transaction Date ", "") # Note space
+                        debit_credit_indicator = transaction_item.get("Debit/Credit", "")
+                        amount = to_float(transaction_item.get("Transaction Amount", 0))
+                        custom_language = transaction_item.get("Custom Language", "") # Type of transaction
+                        # branch = transaction_item.get("Branch / ATM", "") # Currently unused
+                        sender = transaction_item.get("Sender or Remitter Name", "")
+                        receiver = transaction_item.get("Receiver or Beneficiary Name", "")
+                        memo = transaction_item.get("Memo", "")
                         
-                        # Determine if credit or debit
-                        is_credit = debit_credit.lower() in ["credit", "cr", "c", "+"]
+                        is_credit = debit_credit_indicator.lower() in ["credit", "cr", "c", "+"]
                         
-                        # Initialize by_type entry if needed
+                        # Initialize entry for this transaction type if it's new
                         if custom_language not in transaction_details["by_type"]:
-                            transaction_details["by_type"][custom_language] = {
-                                "credits": {
-                                    "amount": 0,
-                                    "count": 0
-                                },
-                                "debits": {
-                                    "amount": 0,
-                                    "count": 0
-                                },
-                                "total": 0,
-                                "count": 0,
-                                "examples": []
-                            }
+                            transaction_details["by_type"][custom_language] = self._initialize_transaction_group(for_details=True)
                         
-                        # Add to type summary
-                        type_data = transaction_details["by_type"][custom_language]
+                        # Aggregate data for this transaction type
+                        type_data_agg = transaction_details["by_type"][custom_language]
                         if is_credit:
-                            type_data["credits"]["amount"] += amount
-                            type_data["credits"]["count"] += 1
+                            type_data_agg["credits"]["amount"] += amount
+                            type_data_agg["credits"]["count"] += 1
                         else:
-                            type_data["debits"]["amount"] += amount
-                            type_data["debits"]["count"] += 1
+                            type_data_agg["debits"]["amount"] += amount
+                            type_data_agg["debits"]["count"] += 1
                         
-                        type_data["total"] += amount
-                        type_data["count"] += 1
+                        type_data_agg["total"] += amount # Total amount for this specific type
+                        type_data_agg["count"] += 1      # Total count for this specific type
                         
-                        # Add to examples (limit to 3 per type)
-                        if len(type_data["examples"]) < 3:
-                            type_data["examples"].append({
+                        # Add a few examples for this transaction type (up to 3)
+                        if len(type_data_agg["examples"]) < 3:
+                            type_data_agg["examples"].append({
                                 "account": account,
                                 "date": date,
                                 "amount": amount,
@@ -656,7 +547,7 @@ class TransactionProcessor:
                                 "memo": memo
                             })
                         
-                        # Add to global totals
+                        # Aggregate global totals
                         if is_credit:
                             transaction_details["credits"]["total_amount"] += amount
                             transaction_details["credits"]["total_transactions"] += 1
@@ -690,69 +581,54 @@ class TransactionProcessor:
             },
             "grand_total": 0,
             "transaction_count": 0,
-            "earliest_date": None,
-            "latest_date": None
+            "earliest_date": None, # Earliest transaction date in unusual activity
+            "latest_date": None   # Latest transaction date in unusual activity
         }
         
-        # Try to find Unusual Activity in full_data
+        # Try to find "Unusual Activity" section in full_data. This section typically lists
+        # transactions flagged as unusual or suspicious.
         for section in self.case_data.get("full_data", []):
             if "Unusual Activity" in section:
-                transactions_list = section.get("Unusual Activity", [])
-                if isinstance(transactions_list, list):
-                    for transaction in transactions_list:
-                        # Extract values with proper type handling
-                        account = str(transaction.get("Account", ""))
-                        date = transaction.get("Transaction Date", "")
-                        debit_credit = transaction.get("Debit/Credit", "")
-                        amount = self._to_float(transaction.get("Transaction Amount", 0))
-                        custom_language = transaction.get("Custom Language", "")
-                        branch = transaction.get("Branch / ATM", "")
-                        sender = transaction.get("Sender or Remitter Name", "")
-                        receiver = transaction.get("Receiver or Beneficiary Name", "")
-                        memo = transaction.get("Memo", "")
+                transactions_list_data = section.get("Unusual Activity", [])
+                if isinstance(transactions_list_data, list):
+                    for transaction_item in transactions_list_data:
+                        # Extract individual transaction details
+                        account = str(transaction_item.get("Account", ""))
+                        date = transaction_item.get("Transaction Date", "") # No space here
+                        debit_credit_indicator = transaction_item.get("Debit/Credit", "")
+                        amount = to_float(transaction_item.get("Transaction Amount", 0))
+                        custom_language = transaction_item.get("Custom Language", "") # Type of transaction
+                        # branch = transaction_item.get("Branch / ATM", "") # Unused variable
+                        # branch = transaction_item.get("Branch / ATM", "") # Unused variable
+                        sender = transaction_item.get("Sender or Remitter Name", "")
+                        receiver = transaction_item.get("Receiver or Beneficiary Name", "")
+                        memo = transaction_item.get("Memo", "")
                         
-                        # Determine if credit or debit
-                        is_credit = debit_credit.lower() in ["credit", "cr", "c", "+"]
+                        is_credit = debit_credit_indicator.lower() in ["credit", "cr", "c", "+"]
                         
-                        # Initialize by_type entry if needed
+                        # Initialize entry for this transaction type if it's new
                         if custom_language not in unusual_activity["by_type"]:
-                            unusual_activity["by_type"][custom_language] = {
-                                "credits": {
-                                    "amount": 0,
-                                    "count": 0
-                                },
-                                "debits": {
-                                    "amount": 0,
-                                    "count": 0
-                                },
-                                "total": 0,
-                                "count": 0,
-                                "earliest_date": None,
-                                "latest_date": None,
-                                "examples": []
-                            }
+                            unusual_activity["by_type"][custom_language] = self._initialize_transaction_group(for_unusual=True)
                         
-                        # Add to type summary
-                        type_data = unusual_activity["by_type"][custom_language]
+                        # Aggregate data for this transaction type
+                        type_data_agg = unusual_activity["by_type"][custom_language]
                         if is_credit:
-                            type_data["credits"]["amount"] += amount
-                            type_data["credits"]["count"] += 1
+                            type_data_agg["credits"]["amount"] += amount
+                            type_data_agg["credits"]["count"] += 1
                         else:
-                            type_data["debits"]["amount"] += amount
-                            type_data["debits"]["count"] += 1
+                            type_data_agg["debits"]["amount"] += amount
+                            type_data_agg["debits"]["count"] += 1
                         
-                        type_data["total"] += amount
-                        type_data["count"] += 1
+                        type_data_agg["total"] += amount # Total amount for this specific type
+                        type_data_agg["count"] += 1      # Total count for this specific type
                         
-                        # Update dates
-                        if type_data["earliest_date"] is None or self._compare_dates(date, type_data["earliest_date"]) < 0:
-                            type_data["earliest_date"] = date
-                        if type_data["latest_date"] is None or self._compare_dates(date, type_data["latest_date"]) > 0:
-                            type_data["latest_date"] = date
+                        # Update earliest and latest dates for this transaction type
+                        type_data_agg["earliest_date"] = compare_dates(date, type_data_agg["earliest_date"], mode='earliest')
+                        type_data_agg["latest_date"] = compare_dates(date, type_data_agg["latest_date"], mode='latest')
                         
-                        # Add to examples (limit to 3 per type)
-                        if len(type_data["examples"]) < 3:
-                            type_data["examples"].append({
+                        # Add a few examples for this transaction type (up to 3)
+                        if len(type_data_agg["examples"]) < 3:
+                            type_data_agg["examples"].append({
                                 "account": account,
                                 "date": date,
                                 "amount": amount,
@@ -762,7 +638,7 @@ class TransactionProcessor:
                                 "memo": memo
                             })
                         
-                        # Add to global totals
+                        # Aggregate global totals for unusual activity
                         if is_credit:
                             unusual_activity["credits"]["total_amount"] += amount
                             unusual_activity["credits"]["total_transactions"] += 1
@@ -773,11 +649,9 @@ class TransactionProcessor:
                         unusual_activity["grand_total"] += amount
                         unusual_activity["transaction_count"] += 1
                         
-                        # Update global dates
-                        if unusual_activity["earliest_date"] is None or self._compare_dates(date, unusual_activity["earliest_date"]) < 0:
-                            unusual_activity["earliest_date"] = date
-                        if unusual_activity["latest_date"] is None or self._compare_dates(date, unusual_activity["latest_date"]) > 0:
-                            unusual_activity["latest_date"] = date
+                        # Update global earliest and latest dates for unusual activity
+                        unusual_activity["earliest_date"] = compare_dates(date, unusual_activity["earliest_date"], mode='earliest')
+                        unusual_activity["latest_date"] = compare_dates(date, unusual_activity["latest_date"], mode='latest')
                     
                     return unusual_activity
         
@@ -802,72 +676,56 @@ class TransactionProcessor:
             },
             "grand_total": 0,
             "transaction_count": 0,
-            "earliest_date": None,
-            "latest_date": None
+            "earliest_date": None, # Earliest transaction date in CTA sample
+            "latest_date": None   # Latest transaction date in CTA sample
         }
         
-        # Try to find CTA Sample in full_data
+        # Try to find "CTA Sample" in full_data. This section provides a sample of transactions
+        # relevant for Customer Transaction Assessment.
         for section in self.case_data.get("full_data", []):
             if "CTA Sample" in section:
-                transactions_list = section.get("CTA Sample", [])
-                if isinstance(transactions_list, list):
-                    for transaction in transactions_list:
-                        # Extract values with proper type handling
-                        account = str(transaction.get("Account", ""))
-                        date = transaction.get("Transaction Date ", "")
-                        debit_credit = transaction.get("Debit/Credit", "")
-                        amount = self._to_float(transaction.get("Transaction Amount", 0))
-                        custom_language = transaction.get("Custom Language", "")
+                transactions_list_data = section.get("CTA Sample", [])
+                if isinstance(transactions_list_data, list):
+                    for transaction_item in transactions_list_data:
+                        # Extract transaction details
+                        account = str(transaction_item.get("Account", ""))
+                        date = transaction_item.get("Transaction Date ", "") # Note space
+                        debit_credit_indicator = transaction_item.get("Debit/Credit", "")
+                        amount = to_float(transaction_item.get("Transaction Amount", 0))
+                        custom_language = transaction_item.get("Custom Language", "")
                         
-                        # Determine if credit or debit
-                        is_credit = debit_credit.lower() in ["credit", "cr", "c", "+"]
+                        is_credit = debit_credit_indicator.lower() in ["credit", "cr", "c", "+"]
                         
-                        # Initialize by_type entry if needed
+                        # Initialize entry for this transaction type if new
                         if custom_language not in cta_sample["by_type"]:
-                            cta_sample["by_type"][custom_language] = {
-                                "credits": {
-                                    "amount": 0,
-                                    "count": 0
-                                },
-                                "debits": {
-                                    "amount": 0,
-                                    "count": 0
-                                },
-                                "total": 0,
-                                "count": 0,
-                                "earliest_date": None,
-                                "latest_date": None,
-                                "examples": []
-                            }
+                            cta_sample["by_type"][custom_language] = self._initialize_transaction_group(for_unusual=True) # Similar structure to unusual
                         
-                        # Add to type summary
-                        type_data = cta_sample["by_type"][custom_language]
+                        # Aggregate data for this transaction type
+                        type_data_agg = cta_sample["by_type"][custom_language]
                         if is_credit:
-                            type_data["credits"]["amount"] += amount
-                            type_data["credits"]["count"] += 1
+                            type_data_agg["credits"]["amount"] += amount
+                            type_data_agg["credits"]["count"] += 1
                         else:
-                            type_data["debits"]["amount"] += amount
-                            type_data["debits"]["count"] += 1
+                            type_data_agg["debits"]["amount"] += amount
+                            type_data_agg["debits"]["count"] += 1
                         
-                        type_data["total"] += amount
-                        type_data["count"] += 1
+                        type_data_agg["total"] += amount
+                        type_data_agg["count"] += 1
                         
-                        # Update dates
-                        if type_data["earliest_date"] is None or self._compare_dates(date, type_data["earliest_date"]) < 0:
-                            type_data["earliest_date"] = date
-                        if type_data["latest_date"] is None or self._compare_dates(date, type_data["latest_date"]) > 0:
-                            type_data["latest_date"] = date
+                        # Update earliest and latest dates for this type
+                        type_data_agg["earliest_date"] = compare_dates(date, type_data_agg["earliest_date"], mode='earliest')
+                        type_data_agg["latest_date"] = compare_dates(date, type_data_agg["latest_date"], mode='latest')
                         
-                        # Add to examples (limit to 3 per type)
-                        if len(type_data["examples"]) < 3:
-                            type_data["examples"].append({
+                        # Add examples for this type (up to 3)
+                        if len(type_data_agg["examples"]) < 3:
+                            type_data_agg["examples"].append({
                                 "account": account,
                                 "date": date,
                                 "amount": amount,
                                 "is_credit": is_credit
                             })
                         
-                        # Add to global totals
+                        # Aggregate global totals for CTA sample
                         if is_credit:
                             cta_sample["credits"]["total_amount"] += amount
                             cta_sample["credits"]["total_transactions"] += 1
@@ -878,11 +736,9 @@ class TransactionProcessor:
                         cta_sample["grand_total"] += amount
                         cta_sample["transaction_count"] += 1
                         
-                        # Update global dates
-                        if cta_sample["earliest_date"] is None or self._compare_dates(date, cta_sample["earliest_date"]) < 0:
-                            cta_sample["earliest_date"] = date
-                        if cta_sample["latest_date"] is None or self._compare_dates(date, cta_sample["latest_date"]) > 0:
-                            cta_sample["latest_date"] = date
+                        # Update global earliest and latest dates for CTA sample
+                        cta_sample["earliest_date"] = compare_dates(date, cta_sample["earliest_date"], mode='earliest')
+                        cta_sample["latest_date"] = compare_dates(date, cta_sample["latest_date"], mode='latest')
                     
                     return cta_sample
         
@@ -907,72 +763,56 @@ class TransactionProcessor:
             },
             "grand_total": 0,
             "transaction_count": 0,
-            "earliest_date": None,
-            "latest_date": None
+            "earliest_date": None, # Earliest transaction date in BIP sample
+            "latest_date": None   # Latest transaction date in BIP sample
         }
         
-        # Try to find BIP Sample in full_data
+        # Try to find "BIP Sample" in full_data. This section provides a sample of transactions
+        # relevant for Business Intelligence Profile or similar analysis.
         for section in self.case_data.get("full_data", []):
             if "BIP Sample" in section:
-                transactions_list = section.get("BIP Sample", [])
-                if isinstance(transactions_list, list):
-                    for transaction in transactions_list:
-                        # Extract values with proper type handling
-                        account = str(transaction.get("Account", ""))
-                        date = transaction.get("Transaction Date ", "")
-                        debit_credit = transaction.get("Debit/Credit", "")
-                        amount = self._to_float(transaction.get("Transaction Amount", 0))
-                        custom_language = transaction.get("Custom Language", "")
+                transactions_list_data = section.get("BIP Sample", [])
+                if isinstance(transactions_list_data, list):
+                    for transaction_item in transactions_list_data:
+                        # Extract transaction details
+                        account = str(transaction_item.get("Account", ""))
+                        date = transaction_item.get("Transaction Date ", "") # Note space
+                        debit_credit_indicator = transaction_item.get("Debit/Credit", "")
+                        amount = to_float(transaction_item.get("Transaction Amount", 0))
+                        custom_language = transaction_item.get("Custom Language", "")
                         
-                        # Determine if credit or debit
-                        is_credit = debit_credit.lower() in ["credit", "cr", "c", "+"]
+                        is_credit = debit_credit_indicator.lower() in ["credit", "cr", "c", "+"]
                         
-                        # Initialize by_type entry if needed
+                        # Initialize entry for this transaction type if new
                         if custom_language not in bip_sample["by_type"]:
-                            bip_sample["by_type"][custom_language] = {
-                                "credits": {
-                                    "amount": 0,
-                                    "count": 0
-                                },
-                                "debits": {
-                                    "amount": 0,
-                                    "count": 0
-                                },
-                                "total": 0,
-                                "count": 0,
-                                "earliest_date": None,
-                                "latest_date": None,
-                                "examples": []
-                            }
+                            bip_sample["by_type"][custom_language] = self._initialize_transaction_group(for_unusual=True) # Similar structure
                         
-                        # Add to type summary
-                        type_data = bip_sample["by_type"][custom_language]
+                        # Aggregate data for this transaction type
+                        type_data_agg = bip_sample["by_type"][custom_language]
                         if is_credit:
-                            type_data["credits"]["amount"] += amount
-                            type_data["credits"]["count"] += 1
+                            type_data_agg["credits"]["amount"] += amount
+                            type_data_agg["credits"]["count"] += 1
                         else:
-                            type_data["debits"]["amount"] += amount
-                            type_data["debits"]["count"] += 1
+                            type_data_agg["debits"]["amount"] += amount
+                            type_data_agg["debits"]["count"] += 1
                         
-                        type_data["total"] += amount
-                        type_data["count"] += 1
+                        type_data_agg["total"] += amount
+                        type_data_agg["count"] += 1
                         
-                        # Update dates
-                        if type_data["earliest_date"] is None or self._compare_dates(date, type_data["earliest_date"]) < 0:
-                            type_data["earliest_date"] = date
-                        if type_data["latest_date"] is None or self._compare_dates(date, type_data["latest_date"]) > 0:
-                            type_data["latest_date"] = date
+                        # Update earliest and latest dates for this type
+                        type_data_agg["earliest_date"] = compare_dates(date, type_data_agg["earliest_date"], mode='earliest')
+                        type_data_agg["latest_date"] = compare_dates(date, type_data_agg["latest_date"], mode='latest')
                         
-                        # Add to examples (limit to 3 per type)
-                        if len(type_data["examples"]) < 3:
-                            type_data["examples"].append({
+                        # Add examples for this type (up to 3)
+                        if len(type_data_agg["examples"]) < 3:
+                            type_data_agg["examples"].append({
                                 "account": account,
                                 "date": date,
                                 "amount": amount,
                                 "is_credit": is_credit
                             })
                         
-                        # Add to global totals
+                        # Aggregate global totals for BIP sample
                         if is_credit:
                             bip_sample["credits"]["total_amount"] += amount
                             bip_sample["credits"]["total_transactions"] += 1
@@ -983,11 +823,9 @@ class TransactionProcessor:
                         bip_sample["grand_total"] += amount
                         bip_sample["transaction_count"] += 1
                         
-                        # Update global dates
-                        if bip_sample["earliest_date"] is None or self._compare_dates(date, bip_sample["earliest_date"]) < 0:
-                            bip_sample["earliest_date"] = date
-                        if bip_sample["latest_date"] is None or self._compare_dates(date, bip_sample["latest_date"]) > 0:
-                            bip_sample["latest_date"] = date
+                        # Update global earliest and latest dates for BIP sample
+                        bip_sample["earliest_date"] = compare_dates(date, bip_sample["earliest_date"], mode='earliest')
+                        bip_sample["latest_date"] = compare_dates(date, bip_sample["latest_date"], mode='latest')
                     
                     return bip_sample
         
@@ -1113,14 +951,16 @@ class TransactionProcessor:
 
     def calculate_alerting_activity_summary(self) -> Dict[str, Any]:
         """
-        Calculate detailed alerting activity summary including credit and debit activity
+        Calculate detailed alerting activity summary including credit and debit activity.
+        This method aggregates data from previously processed transaction summaries and case information
+        to create a focused summary related to the specific alert conditions.
         
         Returns:
-            Dict: Alerting activity summary with detailed credit and debit information
+            Dict: Alerting activity summary with detailed credit and debit information.
         """
-        # Initialize the summary object
+        # Initialize the summary object structure
         summary = {
-            "alertInfo": {
+            "alertInfo": { # Information about the alert itself
                 "caseNumber": "",
                 "alertingAccounts": "",
                 "alertingMonths": "",
@@ -1199,14 +1039,13 @@ class TransactionProcessor:
                 credit_summary["maxCreditAmount"] = credit_data.get("max_amount", 0)
             
             if credit_data.get("earliest_date"):
-                if not credit_summary["minTransactionDate"] or self._compare_dates(credit_data.get("earliest_date"), credit_summary["minTransactionDate"]) < 0:
-                    credit_summary["minTransactionDate"] = credit_data.get("earliest_date")
+                credit_summary["minTransactionDate"] = compare_dates(credit_data.get("earliest_date"), credit_summary["minTransactionDate"], mode='earliest')
             
             if credit_data.get("latest_date"):
-                if not credit_summary["maxTransactionDate"] or self._compare_dates(credit_data.get("latest_date"), credit_summary["maxTransactionDate"]) > 0:
-                    credit_summary["maxTransactionDate"] = credit_data.get("latest_date")
+                credit_summary["maxTransactionDate"] = compare_dates(credit_data.get("latest_date"), credit_summary["maxTransactionDate"], mode='latest')
             
-            # Find credit type with highest percentage
+            # Find credit type with highest percentage from the 'by_type' breakdown
+            # in the previously computed activity_summary for this account.
             highest_percent = 0
             highest_type = ""
             for txn_type, txn_data in credit_data.get("by_type", {}).items():
@@ -1233,14 +1072,12 @@ class TransactionProcessor:
                 debit_summary["maxDebitAmount"] = debit_data.get("max_amount", 0)
             
             if debit_data.get("earliest_date"):
-                if not debit_summary["minTransactionDate"] or self._compare_dates(debit_data.get("earliest_date"), debit_summary["minTransactionDate"]) < 0:
-                    debit_summary["minTransactionDate"] = debit_data.get("earliest_date")
+                debit_summary["minTransactionDate"] = compare_dates(debit_data.get("earliest_date"), debit_summary["minTransactionDate"], mode='earliest')
             
             if debit_data.get("latest_date"):
-                if not debit_summary["maxTransactionDate"] or self._compare_dates(debit_data.get("latest_date"), debit_summary["maxTransactionDate"]) > 0:
-                    debit_summary["maxTransactionDate"] = debit_data.get("latest_date")
+                debit_summary["maxTransactionDate"] = compare_dates(debit_data.get("latest_date"), debit_summary["maxTransactionDate"], mode='latest')
             
-            # Find debit type with highest percentage
+            # Find debit type with highest percentage, similar to credits.
             highest_percent = 0
             highest_type = ""
             for txn_type, txn_data in debit_data.get("by_type", {}).items():
@@ -1260,77 +1097,3 @@ class TransactionProcessor:
             summary["debitSummary"]["minDebitAmount"] = 0
         
         return summary
-    # Helper methods
-    
-    def _to_float(self, value: Any) -> float:
-        """Convert value to float with error handling"""
-        if isinstance(value, (int, float)):
-            return float(value)
-        
-        if isinstance(value, str):
-            # Remove currency symbols and commas
-            cleaned_value = value.replace('$', '').replace(',', '')
-            try:
-                return float(cleaned_value)
-            except ValueError:
-                return 0.0
-        
-        return 0.0
-    
-    def _to_int(self, value: Any) -> int:
-        """Convert value to int with error handling"""
-        if isinstance(value, int):
-            return value
-        
-        if isinstance(value, float):
-            return int(value)
-        
-        if isinstance(value, str):
-            # Remove non-numeric characters
-            cleaned_value = re.sub(r'[^0-9]', '', value)
-            try:
-                return int(cleaned_value)
-            except ValueError:
-                return 0
-        
-        return 0
-    
-    def _compare_dates(self, date1: str, date2: str) -> int:
-        """
-        Compare two dates
-        
-        Args:
-            date1: First date string
-            date2: Second date string
-            
-        Returns:
-            int: -1 if date1 < date2, 0 if equal, 1 if date1 > date2
-        """
-        if not date1 or not date2:
-            return 0
-        
-        # Try to parse dates
-        date1_obj = None
-        date2_obj = None
-        
-        # Try different date formats
-        date_formats = ['%m/%d/%Y', '%Y-%m-%d', '%m/%d/%y', '%d/%m/%Y']
-        
-        for fmt in date_formats:
-            try:
-                if not date1_obj:
-                    date1_obj = datetime.strptime(date1, fmt)
-                if not date2_obj:
-                    date2_obj = datetime.strptime(date2, fmt)
-                
-                if date1_obj and date2_obj:
-                    break
-            except ValueError:
-                continue
-        
-        # If parsing fails, compare as strings
-        if not date1_obj or not date2_obj:
-            return (date1 > date2) - (date1 < date2)
-        
-        # Compare datetime objects
-        return (date1_obj > date2_obj) - (date1_obj < date2_obj)

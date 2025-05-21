@@ -8,7 +8,7 @@ import re
 import json
 import tempfile
 from datetime import datetime
-from werkzeug.utils import secure_filename
+# from werkzeug.utils import secure_filename # Unused import
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 
@@ -28,8 +28,8 @@ from backend.integrations.llm_client import LLMClient
 from backend.data.case_repository import get_case, get_full_case, get_available_cases
 from backend.utils.section_extractors import (
     extract_alerting_activity_summary, generate_alerting_activity_prompt,
-    extract_prior_cases_summary, generate_prior_cases_prompt,
-    extract_scope_of_review, generate_scope_of_review_prompt
+    extract_prior_cases_summary, generate_prior_cases_prompt
+    # Removed unused: extract_scope_of_review, generate_scope_of_review_prompt
 )
 
 # Set up logging
@@ -38,18 +38,20 @@ logger = get_logger(__name__)
 # Initialize app
 app = Flask(__name__)
 
-# Configure Flask app directly with variables from config
-app.config['UPLOAD_FOLDER'] = config.UPLOAD_DIR  # Using UPLOAD_DIR from config
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload
-app.config['SECRET_KEY'] = os.urandom(24)  # Generate a random secret key
+# --- Flask App Configuration ---
+# Populate Flask app configuration directly from the project's `config` module.
+# This allows centralized management of settings like upload directories, debug modes, etc.
+app.config['UPLOAD_FOLDER'] = config.UPLOAD_DIR
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload limit for files.
+app.config['SECRET_KEY'] = os.urandom(24)  # Secure random key for session management and other security features.
 
-# Check if API_DEBUG exists, otherwise default to False
+# Set Flask's DEBUG mode based on API_DEBUG from the config module, defaulting to False if not set.
 if hasattr(config, 'API_DEBUG'):
     app.config['DEBUG'] = config.API_DEBUG
 else:
     app.config['DEBUG'] = False
 
-CORS(app)  # Enable CORS for all routes
+CORS(app)  # Enable Cross-Origin Resource Sharing (CORS) for all routes.
 
 # Create required directories
 os.makedirs(config.UPLOAD_DIR, exist_ok=True)  # Using UPLOAD_DIR
@@ -63,17 +65,74 @@ VALID_RECOMMENDATION_SECTIONS = [
     "investigation_summary", "conclusion", "cta", "retain_close"
 ]
 
+
+def _load_session_data(session_id: str, upload_folder_path: str) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, str]], Optional[int]]:
+    """
+    Loads and validates session data from a JSON file.
+
+    Args:
+        session_id: The unique identifier for the session.
+        upload_folder_path: The base path of the upload folder.
+
+    Returns:
+        A tuple (loaded_data, error_response, status_code):
+        - loaded_data: The dictionary parsed from data.json if successful.
+        - error_response: A dictionary with 'status' and 'message' if an error occurs.
+        - status_code: The HTTP status code corresponding to the error.
+        If successful, error_response and status_code will be None.
+    """
+    # Validate session ID format to prevent directory traversal or invalid inputs.
+    if not re.match(r'^[0-9a-f\-]+$', session_id):
+        return None, {"status": "error", "message": "Invalid session ID format"}, 400
+        
+    data_path = os.path.join(upload_folder_path, session_id, 'data.json')
+    
+    # Check if the session data file exists.
+    if not os.path.exists(data_path):
+        return None, {"status": "error", "message": "Session not found"}, 404
+    
+    # Check if the session data file is empty.
+    if os.path.getsize(data_path) == 0:
+        logger.warning(f"Empty data file found: {data_path}")
+        # Frontend might expect a 200 with specific error structure for some cases.
+        # Adjust status code if a different error handling is preferred for empty files.
+        return None, {"status": "error", "message": "Empty data file"}, 200 
+            
+    try:
+        # Load and parse the JSON data from the file.
+        loaded_data = load_from_json_file(data_path)
+        return loaded_data, None, None
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON decode error in file {data_path}: {str(e)}")
+        return None, {"status": "error", "message": f"Invalid JSON in data file: {str(e)}"}, 500
+    except Exception as e:
+        logger.error(f"Error loading session data from {data_path}: {str(e)}")
+        return None, {"status": "error", "message": f"Error loading session data: {str(e)}"}, 500
+
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Health check endpoint"""
+    """
+    Health check endpoint.
+    Provides a simple status check for the application.
+    
+    Returns:
+        JSON response with application status and version.
+    """
     return jsonify({
         "status": "healthy",
-        "version": "1.0.0"
+        "version": "1.0.0" # Example version
     }), 200
 
 @app.route('/api/cases', methods=['GET'])
 def get_available_case_list():
-    """Get list of available cases for UI dropdown"""
+    """
+    Retrieves a list of available cases for UI selection.
+    Calls `get_available_cases` from the case repository.
+    
+    Returns:
+        JSON response containing a list of case summaries or an error message.
+    """
     try:
         cases = get_available_cases()
         return jsonify({
@@ -90,18 +149,34 @@ def get_available_case_list():
 @app.route('/api/generate-from-case', methods=['POST'])
 def generate_from_case():
     """
-    Process selected case to generate SAR narrative
+    Processes a selected case by its case number to generate a SAR narrative and recommendation.
     
-    Requires:
-    - case_number: Case number to use from static repository
-    - model: (optional) LLM model to use for generation
+    Request JSON Body:
+    - `case_number` (str): The unique identifier for the case to process.
+    - `model` (str, optional): The identifier for the LLM model to be used for generation 
+                               (e.g., 'llama3:8b', 'gpt-4'). Defaults if not provided or invalid.
+    
+    Key Processing Steps:
+    1. Retrieves case data using `get_case` and `get_full_case` from the case repository.
+    2. Creates a unique session ID and folder to store processed data.
+    3. Initializes `TransactionProcessor` to process transactions within the case data.
+    4. Structures `excel_data` (simulating data typically from an Excel file).
+    5. Validates the combined data using `DataValidator` and fills missing information.
+    6. Initializes `LLMClient` with the selected model.
+    7. Uses `NarrativeGenerator` to generate all narrative sections and recommendations.
+    8. Saves all processed data, including generated content, to `data.json` within the session folder.
     
     Returns:
-    - sessionId: Session ID for future requests
-    - sections: Generated SAR narrative sections
-    - warning: Any warnings during processing
+        JSON response containing:
+        - `sessionId`: Unique ID for this processing session.
+        - `caseNumber`, `accountNumber`, `dateGenerated`.
+        - `warnings`: Any warnings from the data validation process.
+        - `sections`: Dictionary of generated narrative sections.
+        - `recommendation`: Dictionary of generated recommendation sections.
+        - `case_data`, `excel_data`, `combined_data`, `transaction_data` for context.
+        - `prior_cases` summary.
+        Returns an error JSON response if processing fails at any step.
     """
-    # Get case_number from request
     data = request.get_json() or {}
     case_number = data.get('case_number')
     
@@ -152,41 +227,44 @@ def generate_from_case():
         transaction_processor = TransactionProcessor(case_data)
         transaction_data = transaction_processor.get_all_transaction_data()
         
-        # Create excel_data structure from transaction data
+        # --- Structure excel_data (simulating data typically from an Excel/structured file) ---
+        # This part normalizes data from transaction_processor into a structure
+        # that DataValidator and NarrativeGenerator expect for "excel-like" inputs.
         excel_data = {
-            "activity_summary": transaction_data.get("activity_summary", {}),
-            "unusual_activity": transaction_data.get("unusual_activity", {}),
-            "transaction_summary": {
+            "activity_summary": transaction_data.get("activity_summary", {}), # Overall activity summary
+            "unusual_activity": transaction_data.get("unusual_activity", {}), # Details of unusual transactions
+            "transaction_summary": { # Summary of credits and debits
                 "total_credits": transaction_data.get("activity_summary", {}).get("totals", {}).get("credits", {}).get("total_amount", 0),
                 "total_debits": transaction_data.get("activity_summary", {}).get("totals", {}).get("debits", {}).get("total_amount", 0),
-                "credit_breakdown": [],
-                "debit_breakdown": []
+                "credit_breakdown": [], # To be populated below
+                "debit_breakdown": []   # To be populated below
             },
-            "account_summaries": transaction_data.get("activity_summary", {}).get("accounts", {}),
-            "cta_sample": transaction_data.get("cta_sample", {}),
-            "bip_sample": transaction_data.get("bip_sample", {}),
-            "inter_account_transfers": []
+            "account_summaries": transaction_data.get("activity_summary", {}).get("accounts", {}), # Per-account activity
+            "cta_sample": transaction_data.get("cta_sample", {}), # Sample for Customer Transaction Assessment
+            "bip_sample": transaction_data.get("bip_sample", {}), # Sample for Business Intelligence Profile
+            "inter_account_transfers": [] # Placeholder for inter-account transfers if available
         }
         
-        # Create credit and debit breakdowns from activity summary
-        for account_num, account_data in transaction_data.get("activity_summary", {}).get("accounts", {}).items():
-            # Credit breakdown
-            for txn_type, txn_data in account_data.get("credits", {}).get("by_type", {}).items():
+        # Populate credit_breakdown and debit_breakdown in excel_data.transaction_summary
+        # This iterates over the per-account activity summaries processed by TransactionProcessor.
+        for account_num, account_data_summary in transaction_data.get("activity_summary", {}).get("accounts", {}).items():
+            # Populate credit breakdown from each account's 'by_type' credit data
+            for txn_type, txn_data in account_data_summary.get("credits", {}).get("by_type", {}).items():
                 excel_data["transaction_summary"]["credit_breakdown"].append({
                     "type": txn_type,
                     "amount": txn_data.get("amount", 0),
                     "count": txn_data.get("count", 0)
                 })
             
-            # Debit breakdown
-            for txn_type, txn_data in account_data.get("debits", {}).get("by_type", {}).items():
+            # Populate debit breakdown from each account's 'by_type' debit data
+            for txn_type, txn_data in account_data_summary.get("debits", {}).get("by_type", {}).items():
                 excel_data["transaction_summary"]["debit_breakdown"].append({
                     "type": txn_type,
                     "amount": txn_data.get("amount", 0),
                     "count": txn_data.get("count", 0)
                 })
         
-        # Validate data
+        # --- Validate and Combine Data ---
         validator = DataValidator(case_data, excel_data)
         is_valid, errors, warnings = validator.validate()
         
@@ -283,25 +361,32 @@ def generate_from_case():
 @app.route('/api/sections/<session_id>', methods=['GET'])
 def get_sections(session_id):
     """
-    Get narrative sections for a session with corrected account number handling
+    Retrieves all generated narrative sections and related data for a given session ID.
+
+    URL Parameters:
+    - `session_id` (str): The unique identifier for the session.
+
+    Key Processing Steps:
+    1. Loads session data (which includes pre-generated sections, case data, etc.)
+       using `_load_session_data`.
+    2. Extracts the correct account number using `get_correct_account_number`.
+    3. Constructs a response object containing sections, recommendations, case data,
+       Excel data (simulated), transaction data, and case info.
+
+    Returns:
+        JSON response with all narrative sections, recommendations, and associated data,
+        or an error JSON response if the session is not found or data loading fails.
     """
-    # Validate session ID to prevent directory traversal
-    if not re.match(r'^[0-9a-f\-]+$', session_id):
-        return jsonify({
-            "status": "error",
-            "message": "Invalid session ID format"
-        }), 400
-        
-    data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
-    
-    if not os.path.exists(data_path):
-        return jsonify({
-            "status": "error",
-            "message": "Session not found"
-        }), 404
+    # Load session data using the helper function.
+    data, error_response, status_code = _load_session_data(session_id, app.config['UPLOAD_FOLDER'])
+    if error_response:
+        return jsonify(error_response), status_code
     
     try:
-        data = load_from_json_file(data_path)
+        # Ensure essential keys are present (data integrity check, though _load_session_data handles file issues)
+        if not data or "sections" not in data or "case_data" not in data:
+            logger.error(f"Essential data missing in session {session_id}")
+            return jsonify({"status": "error", "message": "Corrupted session data"}), 500
         
         # Create response with all necessary data for frontend
         response = {
@@ -335,90 +420,110 @@ def get_sections(session_id):
 
 def get_correct_account_number(case_data):
     """
-    Extract the correct account number from case data
-    
+    Extracts the primary account number from the `case_data` dictionary.
+
+    This function attempts to find an account number by checking various
+    locations within the `case_data` structure, following a specific priority:
+    1.  **`case_data.full_data` ("Case Information" section -> "Relevant Accounts" list)**:
+        It iterates through the `full_data` (original list of sections). If a section
+        named "Case Information" is found and it contains a non-empty "Relevant Accounts"
+        list, the first account number from this list is used.
+    2.  **`case_data.account_info.account_number`**: If not found in "Relevant Accounts",
+        it checks if `case_data` has an `account_info` dictionary with an `account_number` key.
+    3.  **`case_data.accounts[0].account_number`**: If still not found, it checks if
+        `case_data` has an `accounts` list and attempts to get the `account_number`
+        from the first element of this list.
+
+    If no account number can be extracted through these methods, a warning is logged,
+    and the function returns "Unknown".
+
     Args:
-        case_data: The case data dictionary
-        
+        case_data: The case data dictionary, typically the "flattened" representation
+                   which might also contain `full_data`.
+
     Returns:
-        str: The correct account number
+        str: The extracted account number, or "Unknown" if not found.
     """
     account_number = ""
     
-    # First priority: Get from Relevant Accounts in Case Information section
-    if case_data.get("full_data"):
+    # Priority 1: Extract from "Relevant Accounts" in the "Case Information" section of `full_data`.
+    # `full_data` holds the original, non-flattened list of case sections.
+    if case_data.get("full_data") and isinstance(case_data["full_data"], list):
         for section in case_data["full_data"]:
-            if section.get("section") == "Case Information" and section.get("Relevant Accounts"):
-                if section["Relevant Accounts"] and len(section["Relevant Accounts"]) > 0:
-                    account_number = section["Relevant Accounts"][0]
-                    logger.debug(f"Using account number {account_number} from Relevant Accounts")
-                    break
+            if isinstance(section, dict) and section.get("section") == "Case Information":
+                relevant_accounts = section.get("Relevant Accounts")
+                if relevant_accounts and isinstance(relevant_accounts, list) and len(relevant_accounts) > 0:
+                    account_number = str(relevant_accounts[0]) # Use the first relevant account.
+                    logger.debug(f"Using account number '{account_number}' from 'Relevant Accounts'.")
+                    break # Found, no need to check other sections for this source.
     
-    # Second priority: Get from case_data.account_info.account_number
-    if not account_number and case_data.get("account_info") and case_data["account_info"].get("account_number"):
-        account_number = case_data["account_info"]["account_number"]
-        logger.debug(f"Using account number {account_number} from account_info")
+    # Priority 2: Extract from `case_data.account_info.account_number`.
+    # `account_info` in the flattened structure usually stores the primary account details.
+    if not account_number: # If not found in Priority 1
+        account_info_dict = case_data.get("account_info")
+        if isinstance(account_info_dict, dict) and account_info_dict.get("account_number"):
+            account_number = str(account_info_dict["account_number"])
+            logger.debug(f"Using account number '{account_number}' from 'case_data.account_info'.")
     
-    # Third priority: Try to find from accounts array
-    if not account_number and case_data.get("accounts") and len(case_data["accounts"]) > 0:
-        account = case_data["accounts"][0]
-        if account.get("account_number"):
-            account_number = account["account_number"]
-            logger.debug(f"Using account number {account_number} from accounts array")
+    # Priority 3: Extract from the first element of `case_data.accounts` list.
+    # The `accounts` list in the flattened structure contains all accounts associated with the case.
+    if not account_number: # If not found in Priority 1 or 2
+        accounts_list = case_data.get("accounts")
+        if isinstance(accounts_list, list) and len(accounts_list) > 0:
+            first_account_dict = accounts_list[0]
+            if isinstance(first_account_dict, dict) and first_account_dict.get("account_number"):
+                account_number = str(first_account_dict["account_number"])
+                logger.debug(f"Using account number '{account_number}' from the first item in 'case_data.accounts' list.")
     
-    # If still no account number found, log a warning
+    # Fallback: If no account number is found after checking all prioritized locations.
     if not account_number:
-        logger.warning(f"No account number found for case {case_data.get('case_number', 'unknown')}")
-        account_number = "Unknown"
+        logger.warning(f"Could not determine account number for case '{case_data.get('case_number', 'unknown')}'. Defaulting to 'Unknown'.")
+        account_number = "Unknown" # Default value.
     
     return account_number
 
 @app.route('/api/alerting-activity/<session_id>', methods=['GET'])
-def get_alerting_activity(session_id):
+def get_alerting_activity(session_id: str):
     """
-    Get detailed alerting activity summary for a session - directly from case data alerts
+    Retrieves or generates the alerting activity summary for a given session.
+
+    URL Parameters:
+    - `session_id` (str): The unique identifier for the session.
+
+    Key Processing Steps:
+    1. Loads session data using `_load_session_data`.
+    2. Extracts `case_data` and `full_case_data` (original case structure).
+    3. Uses `extract_alerting_activity_summary` to get structured alert data from `full_case_data`.
+       If `full_case_data` is unavailable, it attempts to build a basic summary from `case_data.alert_info`.
+    4. Checks if a summary was previously generated and stored in `data['recommendation']['alerting_activity']`.
+    5. If no pre-existing summary, it generates a new one using `LLMClient` and `generate_alerting_activity_prompt`.
+       The newly generated summary is then saved back to the session's `data.json`.
+
+    Returns:
+        JSON response containing:
+        - `alertingActivitySummary`: Structured data about the alert(s).
+        - `generatedSummary`: The textual summary (either pre-existing or newly generated).
+        Returns an error JSON response if session/data loading fails or during generation.
     """
-    # Validate session ID to prevent directory traversal
-    if not re.match(r'^[0-9a-f\-]+$', session_id):
-        return jsonify({
-            "status": "error",
-            "message": "Invalid session ID format"
-        }), 400
+    # Load session data using the helper function.
+    data, error_response, status_code = _load_session_data(session_id, app.config['UPLOAD_FOLDER'])
+    if error_response:
+        # Handle cases where _load_session_data returns an error with a 200 status (e.g., empty file)
+        # by ensuring a consistent error structure for the frontend if needed.
+        if status_code == 200 and error_response.get("status") == "error":
+             return jsonify({
+                "status": "error",
+                "message": error_response.get("message", "Failed to load session data."),
+                "alertingActivitySummary": {"alertInfo": {"caseNumber": "", "alertDescription": ""}},
+                "generatedSummary": ""
+            }), 200 # Or a more appropriate error code like 400/500 if frontend handles it
+        return jsonify(error_response), status_code
     
-    data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
-    
-    if not os.path.exists(data_path):
-        return jsonify({
-            "status": "error",
-            "message": "Session not found"
-        }), 404
-    
+    # Proceed if data is loaded successfully.
     try:
-        # If file is empty, return empty result
-        if os.path.getsize(data_path) == 0:
-            logger.warning(f"Empty data file found: {data_path}")
-            return jsonify({
-                "status": "error",
-                "message": "Empty data file",
-                "alertingActivitySummary": {
-                    "alertInfo": {"caseNumber": "", "alertDescription": ""}
-                },
-                "generatedSummary": ""
-            }), 200
-            
-        # Read and parse data
-        try:
-            data = load_from_json_file(data_path)
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON decode error in file {data_path}: {str(e)}")
-            return jsonify({
-                "status": "error",
-                "message": f"Invalid JSON in data file: {str(e)}",
-                "alertingActivitySummary": {
-                    "alertInfo": {"caseNumber": "", "alertDescription": ""}
-                },
-                "generatedSummary": ""
-            }), 200
+        if not data: # Should be caught by _load_session_data, but as a safeguard.
+             return jsonify({"status": "error", "message": "Session data is unexpectedly empty."}), 500
+
             
         case_data = data.get("case_data", {})
         
@@ -528,32 +633,41 @@ def get_alerting_activity(session_id):
 @app.route('/api/regenerate/<session_id>/<section_id>', methods=['POST'])
 def regenerate_section(session_id, section_id):
     """
-    Regenerate a specific section using NarrativeGenerator directly
+    Regenerates the content for a specific narrative or recommendation section.
+
+    URL Parameters:
+    - `session_id` (str): The unique identifier for the session.
+    - `section_id` (str): The ID of the section to regenerate (must be in `VALID_SECTION_IDS` or `VALID_RECOMMENDATION_SECTIONS`).
+
+    Request JSON Body:
+    - (Optional) May include model selection or other parameters if regeneration logic is extended.
+
+    Key Processing Steps:
+    1. Loads session data using `_load_session_data`.
+    2. Retrieves `combined_data` (used as input for `NarrativeGenerator`).
+    3. Initializes `LLMClient` and `NarrativeGenerator`.
+    4. Determines if the `section_id` refers to a narrative or recommendation section.
+    5. Calls the appropriate generation method on `NarrativeGenerator` (e.g., `generate_suspicious_activity_summary`, `generate_alerting_activity`).
+    6. Updates the corresponding section in the session's `data.json` with the new content.
+       If it's a narrative section, the full narrative text is also rebuilt.
+    7. Saves the updated session data.
+
+    Returns:
+        JSON response with the regenerated section's details (`id`, `content`, `type`),
+        or an error JSON response if regeneration fails.
     """
-    # Validate session ID to prevent directory traversal
-    if not re.match(r'^[0-9a-f\-]+$', session_id):
-        return jsonify({
-            "status": "error",
-            "message": "Invalid session ID format"
-        }), 400
-    
-    # Validate section ID
+    # Load session data using the helper function.
+    data, error_response, status_code = _load_session_data(session_id, app.config['UPLOAD_FOLDER'])
+    if error_response:
+        return jsonify(error_response), status_code
+
+    # Validate section ID against known valid narrative and recommendation section IDs.
     if section_id not in VALID_SECTION_IDS and section_id not in VALID_RECOMMENDATION_SECTIONS:
-        return jsonify({
-            "status": "error",
-            "message": "Invalid section ID"
-        }), 400
-    
-    data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
-    
-    if not os.path.exists(data_path):
-        return jsonify({
-            "status": "error",
-            "message": "Session not found"
-        }), 404
+        return jsonify({"status": "error", "message": "Invalid section ID"}), 400
     
     try:
-        data = load_from_json_file(data_path)
+        if not data or "combined_data" not in data:
+             return jsonify({"status": "error", "message": "Corrupted or incomplete session data for regeneration."}), 500
         
         # Get the combined data for generation
         combined_data = data["combined_data"]
@@ -663,39 +777,44 @@ def regenerate_section(session_id, section_id):
 @app.route('/api/sections/<session_id>/<section_id>', methods=['PUT'])
 def update_section(session_id, section_id):
     """
-    Update a specific section of the SAR narrative
+    Updates the content of a specific narrative section for a given session.
+
+    URL Parameters:
+    - `session_id` (str): The unique identifier for the session.
+    - `section_id` (str): The ID of the narrative section to update (must be in `VALID_SECTION_IDS`).
+
+    Request JSON Body:
+    - `content` (str): The new textual content for the section.
+
+    Key Processing Steps:
+    1. Loads session data using `_load_session_data`.
+    2. Validates that the provided `section_id` is a valid narrative section ID.
+    3. Updates the content of the specified section in `data['sections']`.
+    4. Rebuilds the full narrative text using `NarrativeGenerator` (though typically,
+       the full narrative might be rebuilt from the updated `sections` dict directly
+       or when exporting, depending on how `data['narrative']` is used).
+    5. Saves the updated session data to `data.json`.
+
+    Returns:
+        JSON response indicating success or failure of the update operation.
     """
-    # Validate session ID to prevent directory traversal
-    if not re.match(r'^[0-9a-f\-]+$', session_id):
-        return jsonify({
-            "status": "error",
-            "message": "Invalid session ID format"
-        }), 400
-    
-    # Validate section ID
+    # Load session data using the helper function.
+    data, error_response, status_code = _load_session_data(session_id, app.config['UPLOAD_FOLDER'])
+    if error_response:
+        return jsonify(error_response), status_code
+
+    # Validate that the section_id is for a narrative section.
     if section_id not in VALID_SECTION_IDS:
-        return jsonify({
-            "status": "error",
-            "message": "Invalid section ID"
-        }), 400
+        return jsonify({"status": "error", "message": "Invalid narrative section ID for update"}), 400
     
-    data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
-    
-    if not os.path.exists(data_path):
-        return jsonify({
-            "status": "error",
-            "message": "Session not found"
-        }), 404
-    
-    content = request.json.get('content')
-    if not content:
-        return jsonify({
-            "status": "error",
-            "message": "Content is required"
-        }), 400
+    request_payload = request.get_json()
+    if not request_payload or 'content' not in request_payload: # Ensure content is provided.
+        return jsonify({"status": "error", "message": "Content is required in request body"}), 400
+    content = request_payload['content']
     
     try:
-        data = load_from_json_file(data_path)
+        if not data or "sections" not in data or section_id not in data["sections"]:
+             return jsonify({"status": "error", "message": "Section or session data not found for update."}), 404
         
         # Update section content
         data["sections"][section_id]["content"] = content
@@ -723,39 +842,41 @@ def update_section(session_id, section_id):
 @app.route('/api/recommendations/<session_id>/<section_id>', methods=['PUT'])
 def update_recommendation_section(session_id, section_id):
     """
-    Update a specific recommendation section
+    Updates the content of a specific recommendation section for a given session.
+
+    URL Parameters:
+    - `session_id` (str): The unique identifier for the session.
+    - `section_id` (str): The ID of the recommendation section to update (must be in `VALID_RECOMMENDATION_SECTIONS`).
+
+    Request JSON Body:
+    - `content` (str): The new textual content for the recommendation section.
+
+    Key Processing Steps:
+    1. Loads session data using `_load_session_data`.
+    2. Validates that the `section_id` is a valid recommendation section ID.
+    3. Updates the content of the specified section in `data['recommendation']`.
+    4. Saves the updated session data to `data.json`.
+
+    Returns:
+        JSON response indicating success or failure of the update operation.
     """
-    # Validate session ID to prevent directory traversal
-    if not re.match(r'^[0-9a-f\-]+$', session_id):
-        return jsonify({
-            "status": "error",
-            "message": "Invalid session ID format"
-        }), 400
-    
-    # Validate section ID
+    # Load session data using the helper function.
+    data, error_response, status_code = _load_session_data(session_id, app.config['UPLOAD_FOLDER'])
+    if error_response:
+        return jsonify(error_response), status_code
+
+    # Validate that the section_id is for a recommendation section.
     if section_id not in VALID_RECOMMENDATION_SECTIONS:
-        return jsonify({
-            "status": "error",
-            "message": "Invalid recommendation section ID"
-        }), 400
+        return jsonify({"status": "error", "message": "Invalid recommendation section ID for update"}), 400
     
-    data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
-    
-    if not os.path.exists(data_path):
-        return jsonify({
-            "status": "error",
-            "message": "Session not found"
-        }), 404
-    
-    content = request.json.get('content')
-    if not content:
-        return jsonify({
-            "status": "error",
-            "message": "Content is required"
-        }), 400
+    request_payload = request.get_json()
+    if not request_payload or 'content' not in request_payload: # Ensure content is provided.
+        return jsonify({"status": "error", "message": "Content is required in request body"}), 400
+    content = request_payload['content']
     
     try:
-        data = load_from_json_file(data_path)
+        if not data: # Should be caught by _load_session_data, but as a safeguard.
+             return jsonify({"status": "error", "message": "Session data could not be loaded."}), 500
         
         # Ensure recommendation object exists
         if "recommendation" not in data:
@@ -782,25 +903,47 @@ def update_recommendation_section(session_id, section_id):
 @app.route('/api/prior-cases/<session_id>', methods=['GET'])
 def get_prior_cases_summary(session_id):
     """
-    Get prior cases summary for a session
+    Retrieves or generates a summary of prior cases/SARs for a given session.
+
+    URL Parameters:
+    - `session_id` (str): The unique identifier for the session.
+
+    Key Processing Steps:
+    1. Loads session data using `_load_session_data`.
+    2. Attempts to retrieve `prior_cases` from the loaded session data.
+    3. If not found in session, it tries to extract them from `case_data` (either from
+       `full_data` if present, or by fetching `full_case_data` from the repository).
+       The extracted prior cases are then saved back to the session data.
+    4. Generates a prompt for LLM summarization using `generate_prior_cases_prompt`.
+    5. Checks if a summary was previously generated and stored in `data['recommendation']['prior_sars']`.
+    6. If no pre-existing summary and prior cases exist, it generates a new one using `LLMClient`.
+       The newly generated summary is saved back to the session data.
+
+    Returns:
+        JSON response containing:
+        - `priorCases`: List of structured prior case data.
+        - `prompt`: The prompt used for LLM generation.
+        - `generatedSummary`: The textual summary of prior cases.
+        Returns an error JSON response (but with HTTP 200 for graceful UI handling) if processing fails.
     """
-    # Validate session ID to prevent directory traversal
-    if not re.match(r'^[0-9a-f\-]+$', session_id):
+    # Load session data using the helper function.
+    data, error_response, status_code = _load_session_data(session_id, app.config['UPLOAD_FOLDER'])
+    if error_response:
+        # For this specific route, the original code returns 200 on error for UI handling.
+        if status_code != 200 : # If _load_session_data had a real error (400, 404, 500)
+             return jsonify(error_response), status_code
+        # If it was a 200 with error message (e.g. empty file from _load_session_data)
         return jsonify({
-            "status": "error",
-            "message": "Invalid session ID format"
-        }), 400
-    
-    data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
-    
-    if not os.path.exists(data_path):
-        return jsonify({
-            "status": "error",
-            "message": "Session not found"
-        }), 404
-    
+            "status": "success", # Original code returns success for UI
+            "message": error_response.get("message", "Error loading session data."),
+            "priorCases": [],
+            "prompt": "Write a brief summary stating that no prior SARs were identified for this account or customer.",
+            "generatedSummary": "No prior SARs were identified for the subjects or account."
+        }), 200
+
     try:
-        data = load_from_json_file(data_path)
+        if not data: # Safeguard
+             return jsonify({"status": "error", "message": "Session data is unexpectedly empty."}), 500
         
         # Try to get prior cases from session data
         prior_cases = data.get("prior_cases", [])
@@ -866,25 +1009,31 @@ def get_prior_cases_summary(session_id):
 @app.route('/api/regenerate-prior-cases/<session_id>', methods=['POST'])
 def regenerate_prior_cases(session_id):
     """
-    Regenerate prior cases summary for a session
+    Regenerates the prior cases/SARs summary for a given session using an LLM.
+
+    URL Parameters:
+    - `session_id` (str): The unique identifier for the session.
+
+    Key Processing Steps:
+    1. Loads session data using `_load_session_data`.
+    2. Retrieves `prior_cases` data (potentially fetching from `full_case_data` if not directly in session).
+    3. Generates a prompt suitable for LLM summarization using `generate_prior_cases_prompt`.
+    4. Initializes `LLMClient` and generates a new textual summary.
+    5. Updates `data['recommendation']['prior_sars']` with the new summary.
+    6. Saves the updated session data.
+
+    Returns:
+        JSON response containing the (potentially updated) `priorCases` list, the `prompt`,
+        and the newly `generatedSummary`, or an error JSON response if regeneration fails.
     """
-    # Validate session ID to prevent directory traversal
-    if not re.match(r'^[0-9a-f\-]+$', session_id):
-        return jsonify({
-            "status": "error",
-            "message": "Invalid session ID format"
-        }), 400
-    
-    data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
-    
-    if not os.path.exists(data_path):
-        return jsonify({
-            "status": "error",
-            "message": "Session not found"
-        }), 404
+    # Load session data using the helper function.
+    data, error_response, status_code = _load_session_data(session_id, app.config['UPLOAD_FOLDER'])
+    if error_response:
+        return jsonify(error_response), status_code
     
     try:
-        data = load_from_json_file(data_path)
+        if not data: # Safeguard
+             return jsonify({"status": "error", "message": "Session data is unexpectedly empty."}), 500
         
         # Get case number and try to retrieve updated prior cases
         case_data = data.get("case_data", {})
@@ -933,25 +1082,33 @@ def regenerate_prior_cases(session_id):
 @app.route('/api/export/<session_id>', methods=['GET'])
 def export_narrative(session_id):
     """
-    Export the final SAR narrative
+    Exports the generated SAR narrative as a text file for a given session.
+
+    URL Parameters:
+    - `session_id` (str): The unique identifier for the session.
+
+    Key Processing Steps:
+    1. Loads session data using `_load_session_data`.
+    2. Retrieves `case_data` and `sections` (generated narrative content).
+    3. Reconstructs the full narrative text by concatenating content from `sections`
+       based on the order defined by `SECTION_IDS`.
+    4. Creates a temporary text file.
+    5. Writes a header (case number, generation date) and the narrative to the file.
+    6. Sends the file to the client for download.
+
+    Returns:
+        A Flask `send_file` response to download the text file,
+        or a JSON error response if processing fails.
     """
-    # Validate session ID to prevent directory traversal
-    if not re.match(r'^[0-9a-f\-]+$', session_id):
-        return jsonify({
-            "status": "error",
-            "message": "Invalid session ID format"
-        }), 400
-    
-    data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
-    
-    if not os.path.exists(data_path):
-        return jsonify({
-            "status": "error",
-            "message": "Session not found"
-        }), 404
-    
+    # Load session data using the helper function.
+    data, error_response, status_code = _load_session_data(session_id, app.config['UPLOAD_FOLDER'])
+    if error_response:
+        return jsonify(error_response), status_code
+
     try:
-        data = load_from_json_file(data_path)
+        if not data or "case_data" not in data or "sections" not in data:
+             return jsonify({"status": "error", "message": "Required data for export missing in session."}), 500
+        
         case_data = data["case_data"]
         sections = data["sections"]
         
@@ -1004,25 +1161,33 @@ def export_narrative(session_id):
 @app.route('/api/export-recommendation/<session_id>', methods=['GET'])
 def export_recommendation(session_id):
     """
-    Export the SAR recommendation
+    Exports the generated SAR recommendation as a text file for a given session.
+
+    URL Parameters:
+    - `session_id` (str): The unique identifier for the session.
+
+    Key Processing Steps:
+    1. Loads session data using `_load_session_data`.
+    2. Retrieves `case_data` and `recommendation` (generated recommendation content).
+    3. Constructs the recommendation text by iterating through `ordered_sections`
+       (a predefined order of recommendation parts) and formatting each section's content.
+    4. Creates a temporary text file.
+    5. Writes a header and the formatted recommendation text to the file.
+    6. Sends the file to the client for download.
+
+    Returns:
+        A Flask `send_file` response to download the text file,
+        or a JSON error response if processing fails or recommendation data is missing.
     """
-    # Validate session ID to prevent directory traversal
-    if not re.match(r'^[0-9a-f\-]+$', session_id):
-        return jsonify({
-            "status": "error",
-            "message": "Invalid session ID format"
-        }), 400
-    
-    data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
-    
-    if not os.path.exists(data_path):
-        return jsonify({
-            "status": "error",
-            "message": "Session not found"
-        }), 404
-    
+    # Load session data using the helper function.
+    data, error_response, status_code = _load_session_data(session_id, app.config['UPLOAD_FOLDER'])
+    if error_response:
+        return jsonify(error_response), status_code
+
     try:
-        data = load_from_json_file(data_path)
+        if not data or "case_data" not in data or "recommendation" not in data:
+             return jsonify({"status": "error", "message": "Required data for recommendation export missing in session."}), 404
+        
         case_data = data["case_data"]
         
         # Check if recommendation exists

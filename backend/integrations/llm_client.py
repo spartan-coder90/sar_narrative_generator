@@ -10,10 +10,19 @@ from langchain.chat_models import ChatOpenAI
 from langchain.chat_models.azure_openai import AzureChatOpenAI
 from langchain.llms.ollama import Ollama
 from langchain.schema import HumanMessage, SystemMessage
-from langchain.callbacks.base import BaseCallbackHandler
+# Removed unused import: from langchain.callbacks.base import BaseCallbackHandler
 
 
 class LLMClient:
+    """
+    A client class to interact with various Language Learning Models (LLMs).
+
+    This client supports different LLM providers like OpenAI, Azure OpenAI, and
+    Ollama (for Llama models). It handles the initialization of the appropriate
+    Langchain client based on the provided model name, API key, and endpoint.
+    It also includes methods for generating content and determining activity types
+    based on input data, primarily for SAR narrative generation.
+    """
     def __init__(
         self,
         model: Optional[str] = None,
@@ -129,15 +138,30 @@ class LLMClient:
 
     def determine_activity_type(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Determine type of suspicious activity from data
-        
+        Determines the type of suspicious activity based on keywords and patterns in the input data.
+
+        The method employs a scoring system based on predefined indicators for various activity types
+        such as structuring, unusual ACH, unusual cash transactions, and money laundering.
+        It analyzes alert descriptions, activity summaries, and transaction details to identify these indicators.
+
         Args:
-            data: Case and transaction data
-            
+            data: A dictionary containing case and transaction data. Expected keys include:
+                  - "alert_info": Information about alerts (can be a dict or list of dicts).
+                                   Each alert dict can have a "description" field.
+                  - "activity_summary": A dictionary with an optional "description" field.
+                  - "transaction_summary": A dictionary containing "credit_breakdown" and "debit_breakdown" lists.
+                                           Each item in these lists can have a "type" field.
+                  - "unusual_activity": A dictionary containing a "transactions" list.
+                                        Each transaction item can have an "amount" field.
+
         Returns:
-            Dict: Activity type information
+            A dictionary containing information about the determined activity type. This information
+            is retrieved from `config.ACTIVITY_TYPES`. If no specific activity type scores highest,
+            it defaults to "UNUSUAL_ACH". If the determined type is not in `config.ACTIVITY_TYPES`,
+            it also falls back to "UNUSUAL_ACH".
         """
-        # Simple determination based on keywords in available data
+        # Define keywords associated with different suspicious activity types.
+        # These keywords are used to score the likelihood of each activity type.
         activity_indicators = {
             "STRUCTURING": ["structure", "ctr", "cash deposit", "multiple deposit", "9000", "below 10000"],
             "UNUSUAL_ACH": ["ach", "wire", "transfer", "electronic", "payment", "zelle", "venmo"],
@@ -145,62 +169,75 @@ class LLMClient:
             "MONEY_LAUNDERING": ["launder", "shell", "funnel", "layering", "money laundering", "suspicious"]
         }
         
-        # Extract relevant information for detection
+        # --- Data Extraction and Preparation ---
+        # Extract alert descriptions. Alerts can be a single dictionary or a list.
         alert_info = data.get("alert_info", {})
-        alert_desc = ""
-        
-        # Handle alert info in different formats
+        alert_desc_text = ""
         if isinstance(alert_info, list) and alert_info:
             for alert in alert_info:
                 if isinstance(alert, dict):
-                    alert_desc += alert.get("description", "").lower() + " "
+                    alert_desc_text += alert.get("description", "").lower() + " "
         elif isinstance(alert_info, dict):
-            alert_desc = alert_info.get("description", "").lower()
+            alert_desc_text = alert_info.get("description", "").lower()
         
-        activity_desc = data.get("activity_summary", {}).get("description", "").lower()
+        # Extract activity description from the activity summary.
+        activity_summary_desc = data.get("activity_summary", {}).get("description", "").lower()
         
-        # Count matches for each activity type
+        # --- Scoring Logic ---
+        # Initialize scores for each activity type to zero.
         scores = {activity: 0 for activity in activity_indicators}
         
+        # Score based on keywords found in alert descriptions and activity summaries.
+        # Keywords in alert descriptions are given a higher weight.
         for activity, keywords in activity_indicators.items():
             for keyword in keywords:
-                if keyword in alert_desc:
-                    scores[activity] += 2
-                if keyword in activity_desc:
-                    scores[activity] += 1
+                if keyword in alert_desc_text:
+                    scores[activity] += 2  # Higher score for matches in alert descriptions
+                if keyword in activity_summary_desc:
+                    scores[activity] += 1  # Lower score for matches in general activity summary
         
-        # Look for transaction patterns
+        # Score based on transaction patterns from transaction summary.
         transaction_summary = data.get("transaction_summary", {})
-        
-        # Check if there are cash transactions
         credit_breakdown = transaction_summary.get("credit_breakdown", [])
         debit_breakdown = transaction_summary.get("debit_breakdown", [])
         
+        # Iterate through credit and debit transaction types.
         for breakdown in credit_breakdown + debit_breakdown:
             txn_type = breakdown.get("type", "").lower()
             
-            # Check for cash-related keywords
+            # Increase score for UNUSUAL_CASH if cash-related keywords are found.
             if any(cash_word in txn_type for cash_word in ["cash", "atm", "currency"]):
                 scores["UNUSUAL_CASH"] += 2
             
-            # Check for ACH/wire-related keywords
+            # Increase score for UNUSUAL_ACH if ACH/wire-related keywords are found.
             if any(ach_word in txn_type for ach_word in ["ach", "wire", "transfer"]):
                 scores["UNUSUAL_ACH"] += 2
         
-        # Check for structuring patterns
-        unusual_activity = data.get("unusual_activity", {})
-        transactions = unusual_activity.get("transactions", [])
+        # Score based on specific structuring patterns from unusual activity data.
+        unusual_activity_data = data.get("unusual_activity", {})
+        transactions = unusual_activity_data.get("transactions", [])
         
-        # Look for multiple transactions below CTR threshold ($10,000)
-        below_threshold_count = sum(1 for txn in transactions 
-                                  if isinstance(txn.get("amount"), (int, float)) and 
-                                  txn.get("amount") > 8000 and txn.get("amount") < 10000)
+        # Check for multiple transactions just below the $10,000 CTR (Currency Transaction Report) threshold.
+        # This is a common structuring pattern.
+        below_threshold_transaction_count = sum(
+            1 for txn in transactions 
+            if isinstance(txn.get("amount"), (int, float)) and 8000 < txn.get("amount", 0) < 10000
+        )
         
-        if below_threshold_count >= 2:
-            scores["STRUCTURING"] += 3
+        if below_threshold_transaction_count >= 2: # If two or more such transactions exist
+            scores["STRUCTURING"] += 3 # Significantly increase structuring score
         
-        # Get activity type with highest score, default to UNUSUAL_ACH
-        best_match = max(scores.items(), key=lambda x: x[1])[0] if any(scores.values()) else "UNUSUAL_ACH"
+        # --- Determine Best Match and Fallback ---
+        # Select the activity type with the highest score.
+        # If all scores are zero (no indicators found), default to "UNUSUAL_ACH".
+        if any(scores.values()): # Check if any score is greater than 0
+            best_match_activity_key = max(scores.items(), key=lambda x: x[1])[0]
+        else:
+            best_match_activity_key = "UNUSUAL_ACH" # Default if no indicators found
         
-        # Return the activity type information from config
-        return config.ACTIVITY_TYPES.get(best_match, config.ACTIVITY_TYPES["UNUSUAL_ACH"])
+        # Retrieve the detailed activity type information from the configuration.
+        # Fallback to "UNUSUAL_ACH" from config if the best_match_activity_key is not found in ACTIVITY_TYPES
+        # or if ACTIVITY_TYPES itself doesn't have "UNUSUAL_ACH" (as a last resort).
+        default_activity_type_info = config.ACTIVITY_TYPES.get("UNUSUAL_ACH", {"name": "Unusual ACH Activity", "indicators": ["unusual electronic transactions"]})
+        
+        return config.ACTIVITY_TYPES.get(best_match_activity_key, default_activity_type_info)

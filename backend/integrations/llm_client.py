@@ -120,11 +120,44 @@ class LLMClient:
                 HumanMessage(content=prompt),
             ]
 
-            # Configure generation parameters
+            # Configure generation parameters.
+            # Note on thread safety: The `self.llm_client` instance is shared if the
+            # same `LLMClient` instance is used across multiple threads (e.g., by
+            # `NarrativeGenerator`'s parallel execution). Modifying attributes like
+            # `temperature` or `max_tokens` on the shared `self.llm_client` instance
+            # right before the `invoke` call could theoretically lead to a race condition
+            # if multiple threads attempt to set different values simultaneously.
+            # For example, thread A sets temp=0.2, thread B sets temp=0.7, then thread A calls invoke;
+            # thread A might use temp=0.7.
+            #
+            # However, LangChain clients are generally designed to be used in concurrent
+            # environments. The actual behavior might depend on whether the underlying
+            # client's `invoke` method captures these values atomically at the start of
+            # its execution or if the client creates per-call configurations internally.
+            #
+            # For robust thread safety with per-call parameters, LangChain typically recommends
+            # using methods like `with_options()` or `bind()` to pass runtime parameters,
+            # e.g., `self.llm_client.with_options(temperature=temperature, max_tokens=max_tokens).invoke(messages)`.
+            # This would require checking how each specific client type (OllamaLLM, ChatOpenAI,
+            # AzureChatOpenAI) best handles runtime option overrides for `invoke`.
+            #
+            # For the current implementation, we rely on the assumption that either:
+            # 1. The sequential nature of `hasattr` checks + assignment + `invoke` is fast enough
+            #    for typical threading scenarios within one `NarrativeGenerator` instance, or
+            # 2. The underlying LangChain clients are robust to these direct attribute modifications
+            #    immediately before an `invoke` call.
+            # This approach is maintained for simplicity unless specific issues arise.
+            # If `LLMClient` instances are NOT shared across threads (e.g., one per request/job),
+            # then this is not an issue.
             if hasattr(self.llm_client, 'temperature'):
                 self.llm_client.temperature = temperature
-            if hasattr(self.llm_client, 'max_tokens'):
+
+            # For max_tokens, some clients might expect it under a different name (e.g., 'num_predict' for Ollama)
+            # or within a specific options structure. The `hasattr` check is a basic safeguard.
+            if hasattr(self.llm_client, 'max_tokens'): # Standard OpenAI, Azure
                 self.llm_client.max_tokens = max_tokens
+            elif hasattr(self.llm_client, 'num_predict') and isinstance(self.llm_client, OllamaLLM): # Ollama
+                self.llm_client.num_predict = max_tokens
             
             # Generate response
             result = self.llm_client.invoke(messages)

@@ -11,9 +11,10 @@ from typing import Dict, List, Any, Optional
 import re
 from datetime import datetime
 import json
+import concurrent.futures # Added for parallel execution
 
 from backend.utils.logger import get_logger
-from backend.config import ACTIVITY_TYPES # Removed TEMPLATES, SAR_TEMPLATE, AML_RISK_INDICATORS
+from backend.config import ACTIVITY_TYPES
 
 logger = get_logger(__name__)
 
@@ -918,134 +919,117 @@ What is the purpose of the wire transactions occurring in the customer's account
     
     # ======= COMPLETE GENERATION METHODS =======
     
-    def generate_narrative(self) -> str:
-        """
-        Generate complete SAR narrative according to requirements
-        
-        Returns:
-            str: Complete SAR narrative
-        """
-        sections = [
-            self.generate_suspicious_activity_summary(),
-            self.generate_prior_cases(),
-            self.generate_account_subject_info(),
-            self.generate_suspicious_activity_analysis(),
-            self.generate_conclusion()
-        ]
-        
-        # Filter out empty sections
-        sections = [section for section in sections if section]
-        
-        # Combine sections
-        narrative = "\n\n".join(sections)
-        
-        return narrative
-    
-    def generate_recommendation(self) -> Dict[str, str]:
-        """
-        Generate complete SAR recommendation
-        
-        Returns:
-            Dict: All recommendation sections
-        """
-        recommendation = {
-            "alerting_activity": self.generate_alerting_activity(),
-            "prior_sars": self.generate_prior_sars_summary(),
-            "scope_of_review": self.generate_scope_of_review(),
-            "investigation_summary": self.generate_investigation_summary(),
-            "conclusion": self.generate_recommendation_conclusion(),
-            "retain_close": self.generate_retain_close(),
-            "cta": self.generate_cta_section()
-        }
-        
-        return recommendation
-    
     def generate_all(self) -> Dict[str, Any]:
         """
-        Generate both SAR narrative and recommendation
-        
+        Generates all SAR narrative and recommendation sections, utilizing parallel
+        LLM calls for efficiency.
+
+        The method first determines the activity type sequentially, as this information
+        is often a prerequisite for generating other sections. Then, it submits tasks
+        for generating each narrative and recommendation section to a thread pool
+        executor, allowing them to run concurrently.
+
+        If any section generation fails (either an LLM error handled within the specific
+        generation method or an unexpected error during future execution), a fallback
+        or error message is used for that section's content.
+
         Returns:
-            Dict: Complete data with narrative and recommendation
+            Dict: A dictionary containing the complete narrative string, a dictionary
+                  of individual narrative sections (for UI purposes), and a dictionary
+                  of recommendation sections. The structure is:
+                  {
+                      "narrative": "Full narrative text...",
+                      "sections": {
+                          "suspicious_activity_summary": {"id": ..., "title": ..., "content": ...},
+                          ...
+                      },
+                      "recommendation": {
+                          "alerting_activity": "Generated content...",
+                          ...
+                      }
+                  }
         """
-        narrative = self.generate_narrative()
-        recommendation = self.generate_recommendation()
-        sections = self._split_narrative_into_sections(narrative)
-        
-        return {
-            "narrative": narrative,
-            "sections": sections,
-            "recommendation": recommendation
+        # Step 1: Determine activity type sequentially as it's needed by other generators.
+        if not self.activity_type:
+            self.activity_type = self.llm_client.determine_activity_type(self.data)
+        # Ensure activity_type is a dict, even if null from client, for safe .get() calls later
+        self.activity_type = self.activity_type or {}
+
+
+        narrative_section_contents = {}
+        recommendation_section_contents = {}
+
+        # Define narrative section generation tasks
+        # Using SECTION_IDS values as keys for narrative_section_contents
+        narrative_tasks = {
+            SECTION_IDS["SUSPICIOUS_ACTIVITY_SUMMARY"]: self.generate_suspicious_activity_summary,
+            SECTION_IDS["PRIOR_CASES"]: self.generate_prior_cases,
+            SECTION_IDS["ACCOUNT_SUBJECT_INFO"]: self.generate_account_subject_info,
+            SECTION_IDS["SUSPICIOUS_ACTIVITY_ANALYSIS"]: self.generate_suspicious_activity_analysis,
+            SECTION_IDS["CONCLUSION"]: self.generate_conclusion,
         }
-    
-    def _split_narrative_into_sections(self, narrative: str) -> Dict[str, Dict[str, str]]:
-        """
-        Split the narrative into sections for UI according to requirements document
-        
-        Args:
-            narrative: Complete narrative text
+
+        # Define recommendation section generation tasks
+        recommendation_tasks = {
+            "alerting_activity": self.generate_alerting_activity,
+            "prior_sars": self.generate_prior_sars_summary,
+            "scope_of_review": self.generate_scope_of_review,
+            "investigation_summary": self.generate_investigation_summary,
+            "conclusion": self.generate_recommendation_conclusion, # Note: key matches 'conclusion' in recommendation_tasks
+            "retain_close": self.generate_retain_close,
+            "cta": self.generate_cta_section,
+        }
+
+        # Use ThreadPoolExecutor to run tasks in parallel
+        # max_workers can be tuned. Using a moderate number.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=7) as executor:
+            future_to_task_id = {}
             
-        Returns:
-            Dict: Sections with ID, title, and content
-        """
-        if not narrative:
-            # Handle empty narrative
-            return {
-                SECTION_IDS["SUSPICIOUS_ACTIVITY_SUMMARY"]: {
-                    "id": SECTION_IDS["SUSPICIOUS_ACTIVITY_SUMMARY"],
-                    "title": SECTION_TITLES[SECTION_IDS["SUSPICIOUS_ACTIVITY_SUMMARY"]],
-                    "content": ""
-                },
-                SECTION_IDS["PRIOR_CASES"]: {
-                    "id": SECTION_IDS["PRIOR_CASES"],
-                    "title": SECTION_TITLES[SECTION_IDS["PRIOR_CASES"]],
-                    "content": ""
-                },
-                SECTION_IDS["ACCOUNT_SUBJECT_INFO"]: {
-                    "id": SECTION_IDS["ACCOUNT_SUBJECT_INFO"],
-                    "title": SECTION_TITLES[SECTION_IDS["ACCOUNT_SUBJECT_INFO"]],
-                    "content": ""
-                },
-                SECTION_IDS["SUSPICIOUS_ACTIVITY_ANALYSIS"]: {
-                    "id": SECTION_IDS["SUSPICIOUS_ACTIVITY_ANALYSIS"],
-                    "title": SECTION_TITLES[SECTION_IDS["SUSPICIOUS_ACTIVITY_ANALYSIS"]],
-                    "content": ""
-                },
-                SECTION_IDS["CONCLUSION"]: {
-                    "id": SECTION_IDS["CONCLUSION"],
-                    "title": SECTION_TITLES[SECTION_IDS["CONCLUSION"]],
-                    "content": ""
-                }
+            # Submit narrative tasks
+            for task_id, method in narrative_tasks.items():
+                future_to_task_id[executor.submit(method)] = ("narrative", task_id)
+
+            # Submit recommendation tasks
+            for task_id, method in recommendation_tasks.items():
+                future_to_task_id[executor.submit(method)] = ("recommendation", task_id)
+
+            for future in concurrent.futures.as_completed(future_to_task_id):
+                task_type, task_id = future_to_task_id[future]
+                try:
+                    result = future.result()
+                    if task_type == "narrative":
+                        narrative_section_contents[task_id] = result
+                    else: # recommendation
+                        recommendation_section_contents[task_id] = result
+                except Exception as exc:
+                    logger.error(f"Section generator '{task_id}' raised an exception: {exc}", exc_info=True)
+                    error_message = f"Error generating section: {task_id}. Details: {str(exc)[:100]}"
+                    if task_type == "narrative":
+                        narrative_section_contents[task_id] = error_message
+                    else:
+                        recommendation_section_contents[task_id] = error_message
+
+        # Assemble the full narrative string in the correct order
+        ordered_narrative_content = [
+            narrative_section_contents.get(SECTION_IDS["SUSPICIOUS_ACTIVITY_SUMMARY"], ""),
+            narrative_section_contents.get(SECTION_IDS["PRIOR_CASES"], ""),
+            narrative_section_contents.get(SECTION_IDS["ACCOUNT_SUBJECT_INFO"], ""),
+            narrative_section_contents.get(SECTION_IDS["SUSPICIOUS_ACTIVITY_ANALYSIS"], ""),
+            narrative_section_contents.get(SECTION_IDS["CONCLUSION"], ""),
+        ]
+        narrative_string = "\n\n".join(filter(None, ordered_narrative_content))
+
+        # Assemble the 'sections' dictionary for UI, using SECTION_TITLES for titles
+        sections_dict = {}
+        for section_key_const, section_id_val in SECTION_IDS.items():
+            sections_dict[section_id_val] = {
+                "id": section_id_val,
+                "title": SECTION_TITLES.get(section_key_const, section_id_val.replace("_", " ").title()), # Fallback title
+                "content": narrative_section_contents.get(section_id_val, f"Content for {section_id_val} not generated.")
             }
-        
-        paragraphs = narrative.split('\n\n')
-        
-        # Define new sections based on the requirements document
-        sections = {
-            SECTION_IDS["SUSPICIOUS_ACTIVITY_SUMMARY"]: {
-                "id": SECTION_IDS["SUSPICIOUS_ACTIVITY_SUMMARY"],
-                "title": SECTION_TITLES[SECTION_IDS["SUSPICIOUS_ACTIVITY_SUMMARY"]],
-                "content": paragraphs[0] if len(paragraphs) > 0 else ""
-            },
-            SECTION_IDS["PRIOR_CASES"]: {
-                "id": SECTION_IDS["PRIOR_CASES"],
-                "title": SECTION_TITLES[SECTION_IDS["PRIOR_CASES"]],
-                "content": paragraphs[1] if len(paragraphs) > 1 else ""
-            },
-            SECTION_IDS["ACCOUNT_SUBJECT_INFO"]: {
-                "id": SECTION_IDS["ACCOUNT_SUBJECT_INFO"],
-                "title": SECTION_TITLES[SECTION_IDS["ACCOUNT_SUBJECT_INFO"]],
-                "content": paragraphs[2] if len(paragraphs) > 2 else ""
-            },
-            SECTION_IDS["SUSPICIOUS_ACTIVITY_ANALYSIS"]: {
-                "id": SECTION_IDS["SUSPICIOUS_ACTIVITY_ANALYSIS"],
-                "title": SECTION_TITLES[SECTION_IDS["SUSPICIOUS_ACTIVITY_ANALYSIS"]],
-                "content": paragraphs[3] if len(paragraphs) > 3 else ""
-            },
-            SECTION_IDS["CONCLUSION"]: {
-                "id": SECTION_IDS["CONCLUSION"],
-                "title": SECTION_TITLES[SECTION_IDS["CONCLUSION"]],
-                "content": paragraphs[4] if len(paragraphs) > 4 else ""
-            }
+
+        return {
+            "narrative": narrative_string,
+            "sections": sections_dict,
+            "recommendation": recommendation_section_contents
         }
-        
-        return sections

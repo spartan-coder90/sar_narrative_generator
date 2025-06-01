@@ -55,29 +55,49 @@ def extract_alerting_activity_summary(case_data):
             alerting_activity_summary["alertInfo"]["caseNumber"] = section.get("Case Number", "")
             break
     
+    # Initialize lists for aggregating alert details
+    alert_months = []
+    alert_descriptions = []
+    # Placeholder for other aggregated fields if needed from multiple alerts,
+    # for now, we primarily take other specific fields from the first alert.
+
     # Extract alerts information from Alerting Details section
+    alerts_data_found = False
     for section in case_data:
         if isinstance(section, dict) and section.get("section") == "Alerting Details":
-            alerts = section.get("alerts", [])
-            if alerts and len(alerts) > 0:
-                alert = alerts[0]  # Use the first alert
-                
-                # Extract all the alert information we want to display
-                alerting_activity_summary["alertInfo"]["alertID"] = alert.get("Alert ID", "")
-                alerting_activity_summary["alertInfo"]["alertingMonths"] = alert.get("Alert Month", "")
-                alerting_activity_summary["alertInfo"]["alertDescription"] = alert.get("Description", "")
-                alerting_activity_summary["alertInfo"]["reviewPeriod"] = alert.get("Review Period", "")
-                alerting_activity_summary["alertInfo"]["transactionalActivityDescription"] = alert.get("Transactional Activity Description", "")
-                alerting_activity_summary["alertInfo"]["alertDispositionSummary"] = alert.get("Alert Disposition Summary", "")
-                alerting_activity_summary["alertInfo"]["alertingAccounts"] = alert.get("Alerting Account", "")
-                alerting_activity_summary["account"] = alert.get("Alerting Account", "")
-                
-                
-            break
+            alerts_data = section.get("alerts", [])
+            alerts_data_found = True # Mark that we found the alerts section
+            if alerts_data:
+                # For fields like alertID, reviewPeriod, transactionalActivityDescription,
+                # alertDispositionSummary, and alertingAccounts, we'll take from the first alert.
+                # If aggregation or different logic is needed for these, it should be specified.
+                first_alert = alerts_data[0]
+                alerting_activity_summary["alertInfo"]["alertID"] = first_alert.get("Alert ID", "")
+                alerting_activity_summary["alertInfo"]["reviewPeriod"] = first_alert.get("Review Period", "")
+                alerting_activity_summary["alertInfo"]["transactionalActivityDescription"] = first_alert.get("Transactional Activity Description", "")
+                alerting_activity_summary["alertInfo"]["alertDispositionSummary"] = first_alert.get("Alert Disposition Summary", "")
+                # Alerting account can also be taken from the first alert, or potentially aggregated if multiple accounts are listed per alert.
+                alerting_activity_summary["alertInfo"]["alertingAccounts"] = first_alert.get("Alerting Account", "")
+                alerting_activity_summary["account"] = first_alert.get("Alerting Account", "") # Assuming 'account' field in summary refers to alerting account.
+
+                # Iterate through ALL alerts to populate alert_months and alert_descriptions
+                for alert_item in alerts_data:
+                    if isinstance(alert_item, dict):
+                        month = alert_item.get("Alert Month")
+                        description = alert_item.get("Description")
+                        if month:
+                            alert_months.append(str(month))
+                        if description:
+                            alert_descriptions.append(str(description))
+            break # Stop after processing the Alerting Details section
     
+    if not alerts_data_found:
+        # Handle case where "Alerting Details" section itself is missing
+        pass # alert_months and alert_descriptions will remain empty
+
     # Combine alert information
-    alerting_activity_summary["alertInfo"]["alertingMonths"] = ", ".join(alert_months)
-    alerting_activity_summary["alertInfo"]["alertDescription"] = "; ".join(alert_descriptions)
+    alerting_activity_summary["alertInfo"]["alertingMonths"] = ", ".join(list(set(alert_months))) # Use set to get unique months
+    alerting_activity_summary["alertInfo"]["alertDescription"] = "; ".join(list(set(alert_descriptions))) # Use set for unique descriptions
     
     # Extract account information
     account_number = ""

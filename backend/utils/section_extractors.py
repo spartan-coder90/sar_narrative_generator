@@ -14,212 +14,143 @@ def extract_alerting_activity_summary(case_data):
     Returns:
         Dict: Structured alerting activity summary
     """
-    alerting_activity_summary = {
+    # case_data is now the new standardized case object (a dictionary)
+    output_summary = {
         "alertInfo": {
-            "caseNumber": "",
-            "alertingAccounts": "",
-            "alertingMonths": "",
-            "alertDescription": "",
-            "alertID": "",
-            "reviewPeriod": "",
-            "transactionalActivityDescription": "",
-            "alertDispositionSummary": ""
+            "caseNumber": "", "alertingAccounts": "", "alertingMonths": "",
+            "alertDescription": "", "alertID": "", "reviewPeriod": "",
+            "transactionalActivityDescription": "N/A", # Default as not in new structure
+            "alertDispositionSummary": "N/A" # Default as not in new structure
         },
+        "account": "", # Primary account number
         "creditSummary": {
-            "percentTotal": 0,
-            "amountTotal": 0,
-            "transactionCount": 0,
-            "minCreditAmount": float('inf'),
-            "maxCreditAmount": 0,
-            "minTransactionDate": "",
-            "maxTransactionDate": "",
-            "highestPercentType": "",
-            "highestPercentValue": 0
+            "percentTotal": 0, "amountTotal": 0, "transactionCount": 0,
+            "minCreditAmount": float('inf'), "maxCreditAmount": 0,
+            "minTransactionDate": "", "maxTransactionDate": "",
+            "highestPercentType": "", "highestPercentValue": 0
         },
         "debitSummary": {
-            "percentTotal": 0,
-            "amountTotal": 0,
-            "transactionCount": 0,
-            "minDebitAmount": float('inf'),
-            "maxDebitAmount": 0,
-            "minTransactionDate": "",
-            "maxTransactionDate": "",
-            "highestPercentType": "",
-            "highestPercentValue": 0
+            "percentTotal": 0, "amountTotal": 0, "transactionCount": 0,
+            "minDebitAmount": float('inf'), "maxDebitAmount": 0,
+            "minTransactionDate": "", "maxTransactionDate": "",
+            "highestPercentType": "", "highestPercentValue": 0
         }
     }
-    
-    # Extract case number
-    for section in case_data:
-        if isinstance(section, dict) and section.get("section") == "Case Information":
-            alerting_activity_summary["alertInfo"]["caseNumber"] = section.get("Case Number", "")
-            break
-    
-    # Initialize lists for aggregating alert details
-    alert_months = []
-    alert_descriptions = []
-    # Placeholder for other aggregated fields if needed from multiple alerts,
-    # for now, we primarily take other specific fields from the first alert.
 
-    # Extract alerts information from Alerting Details section
-    alerts_data_found = False
-    for section in case_data:
-        if isinstance(section, dict) and section.get("section") == "Alerting Details":
-            alerts_data = section.get("alerts", [])
-            alerts_data_found = True # Mark that we found the alerts section
-            if alerts_data:
-                # For fields like alertID, reviewPeriod, transactionalActivityDescription,
-                # alertDispositionSummary, and alertingAccounts, we'll take from the first alert.
-                # If aggregation or different logic is needed for these, it should be specified.
-                first_alert = alerts_data[0]
-                alerting_activity_summary["alertInfo"]["alertID"] = first_alert.get("Alert ID", "")
-                alerting_activity_summary["alertInfo"]["reviewPeriod"] = first_alert.get("Review Period", "")
-                alerting_activity_summary["alertInfo"]["transactionalActivityDescription"] = first_alert.get("Transactional Activity Description", "")
-                alerting_activity_summary["alertInfo"]["alertDispositionSummary"] = first_alert.get("Alert Disposition Summary", "")
-                # Alerting account can also be taken from the first alert, or potentially aggregated if multiple accounts are listed per alert.
-                alerting_activity_summary["alertInfo"]["alertingAccounts"] = first_alert.get("Alerting Account", "")
-                alerting_activity_summary["account"] = first_alert.get("Alerting Account", "") # Assuming 'account' field in summary refers to alerting account.
+    case_info = case_data.get("caseInfo", {})
+    output_summary["alertInfo"]["caseNumber"] = case_info.get("caseNumber", "")
 
-                # Iterate through ALL alerts to populate alert_months and alert_descriptions
-                for alert_item in alerts_data:
-                    if isinstance(alert_item, dict):
-                        month = alert_item.get("Alert Month")
-                        description = alert_item.get("Description")
-                        if month:
-                            alert_months.append(str(month))
-                        if description:
-                            alert_descriptions.append(str(description))
-            break # Stop after processing the Alerting Details section
-    
-    if not alerts_data_found:
-        # Handle case where "Alerting Details" section itself is missing
-        pass # alert_months and alert_descriptions will remain empty
+    alerts_new_struct = case_data.get("alerts", [])
+    alert_months_list = []
+    alert_descriptions_list = []
 
-    # Combine alert information
-    alerting_activity_summary["alertInfo"]["alertingMonths"] = ", ".join(list(set(alert_months))) # Use set to get unique months
-    alerting_activity_summary["alertInfo"]["alertDescription"] = "; ".join(list(set(alert_descriptions))) # Use set for unique descriptions
+    if alerts_new_struct:
+        first_alert_new = alerts_new_struct[0] if isinstance(alerts_new_struct[0], dict) else {}
+        output_summary["alertInfo"]["alertID"] = first_alert_new.get("alertId", "")
+
+        first_alert_review_period = first_alert_new.get("reviewPeriod", {})
+        start_date = first_alert_review_period.get("startDate", "")
+        end_date = first_alert_review_period.get("endDate", "")
+        if start_date and end_date:
+            output_summary["alertInfo"]["reviewPeriod"] = f"{start_date} to {end_date}"
+        elif start_date:
+            output_summary["alertInfo"]["reviewPeriod"] = f"From {start_date}"
+        elif end_date:
+            output_summary["alertInfo"]["reviewPeriod"] = f"Until {end_date}"
+        else: # Fallback to caseInfo review period if alert-specific is incomplete
+            case_review_period = case_info.get("reviewPeriod", {})
+            start_date_case = case_review_period.get("startDate", "")
+            end_date_case = case_review_period.get("endDate", "")
+            if start_date_case and end_date_case:
+                 output_summary["alertInfo"]["reviewPeriod"] = f"{start_date_case} to {end_date_case}"
+
+
+        for alert_item in alerts_new_struct:
+            if isinstance(alert_item, dict):
+                if alert_item.get("alertMonth"):
+                    alert_months_list.append(str(alert_item["alertMonth"]))
+                if alert_item.get("description"):
+                    alert_descriptions_list.append(alert_item["description"])
     
-    # Extract account information
-    account_number = ""
-    account_type = ""
+    output_summary["alertInfo"]["alertingMonths"] = ", ".join(list(set(alert_months_list)))
+    output_summary["alertInfo"]["alertDescription"] = "; ".join(list(set(alert_descriptions_list)))
+
+    accounts_new_struct = case_data.get("accounts", [])
+    primary_account_info = {}
+    if accounts_new_struct and isinstance(accounts_new_struct, list) and accounts_new_struct[0]:
+        primary_account_info = accounts_new_struct[0] if isinstance(accounts_new_struct[0], dict) else {}
     
-    for section in case_data:
-        if section.get("section") == "Account Information":
-            if "Accounts" in section and section["Accounts"]:
-                account = section["Accounts"][0]  # Take first account
-                account_number = account.get("Account Key", "")
-                account_types = account.get("Account Type", [])
-                if account_types:
-                    if isinstance(account_types, list):
-                        account_type = account_types[0] if len(account_types) > 0 else ""
-                    else:
-                        account_type = str(account_types)
-                
-                # Set account number in summary
-                alerting_activity_summary["account"] = account_number
-                
-                # Update alerting accounts with type if not already set
-                if not alerting_activity_summary["alertInfo"]["alertingAccounts"]:
-                    alerting_activity_summary["alertInfo"]["alertingAccounts"] = f"{account_type} {account_number}".strip()
+    account_key = primary_account_info.get("accountKey", "")
+    account_types_list = primary_account_info.get("accountTypes", [])
+    account_type_str = ", ".join(account_types_list) if account_types_list else ""
+    
+    output_summary["account"] = account_key
+    output_summary["alertInfo"]["alertingAccounts"] = f"{account_type_str} {account_key}".strip()
+
+    # Extract Activity Summary data from the primary account's activitySummary
+    account_activity_summary = primary_account_info.get("activitySummary", {})
+    
+    # Process credits
+    credits_by_type = account_activity_summary.get("creditsByType", [])
+    for credit_item in credits_by_type:
+        percent = credit_item.get("percentOfTotal", 0)
+        amount = credit_item.get("totalAmount", 0)
+        count = credit_item.get("transactionCount", 0)
+        min_val = credit_item.get("minTransactionAmount") # Can be None
+        max_val = credit_item.get("maxTransactionAmount") # Can be None
+        min_date = credit_item.get("minTransactionDate", "")
+        max_date = credit_item.get("maxTransactionDate", "")
+        item_type = credit_item.get("type", "")
+
+        output_summary["creditSummary"]["percentTotal"] += percent # This sum might exceed 100 if percentOfTotal is of account total.
+        output_summary["creditSummary"]["amountTotal"] += amount
+        output_summary["creditSummary"]["transactionCount"] += count
+        if min_val is not None and min_val < output_summary["creditSummary"]["minCreditAmount"]:
+            output_summary["creditSummary"]["minCreditAmount"] = min_val
+        if max_val is not None and max_val > output_summary["creditSummary"]["maxCreditAmount"]:
+            output_summary["creditSummary"]["maxCreditAmount"] = max_val
+        if min_date and (not output_summary["creditSummary"]["minTransactionDate"] or min_date < output_summary["creditSummary"]["minTransactionDate"]):
+            output_summary["creditSummary"]["minTransactionDate"] = min_date
+        if max_date and (not output_summary["creditSummary"]["maxTransactionDate"] or max_date > output_summary["creditSummary"]["maxTransactionDate"]):
+            output_summary["creditSummary"]["maxTransactionDate"] = max_date
+        if percent > output_summary["creditSummary"]["highestPercentValue"]:
+            output_summary["creditSummary"]["highestPercentValue"] = percent
+            output_summary["creditSummary"]["highestPercentType"] = item_type
             
-            break
-    
-    # Extract Activity Summary data - this is where credit and debit details come from
-    for section in case_data:
-        if section.get("section") == "Activity Summary":
-            activity_summaries = section.get("Activity Summary", [])
-            
-            for activity in activity_summaries:
-                account = activity.get("Account", "")
-                
-                # Process credit activity
-                credits = activity.get("Credits", [])
-                for credit in credits:
-                    # Update credit summary totals
-                    credit_percent = credit.get("% of Credits", 0)
-                    credit_amount = credit.get("Total ", 0)
-                    credit_count = credit.get("# Transactions ", 0)
-                    min_credit = credit.get("Min Credit Amt.", float('inf'))
-                    max_credit = credit.get("Max Credit Amt.", 0)
-                    min_date = credit.get("Min Txn Date ", "")
-                    max_date = credit.get("Max Txn Date ", "")
-                    credit_type = credit.get("Custom Language", "")
-                    
-                    # Add to credit summary totals
-                    alerting_activity_summary["creditSummary"]["percentTotal"] += credit_percent
-                    alerting_activity_summary["creditSummary"]["amountTotal"] += credit_amount
-                    alerting_activity_summary["creditSummary"]["transactionCount"] += credit_count
-                    
-                    # Update min/max
-                    if min_credit < alerting_activity_summary["creditSummary"]["minCreditAmount"]:
-                        alerting_activity_summary["creditSummary"]["minCreditAmount"] = min_credit
-                    
-                    if max_credit > alerting_activity_summary["creditSummary"]["maxCreditAmount"]:
-                        alerting_activity_summary["creditSummary"]["maxCreditAmount"] = max_credit
-                    
-                    # Update date range
-                    if min_date:
-                        if not alerting_activity_summary["creditSummary"]["minTransactionDate"] or min_date < alerting_activity_summary["creditSummary"]["minTransactionDate"]:
-                            alerting_activity_summary["creditSummary"]["minTransactionDate"] = min_date
-                    
-                    if max_date:
-                        if not alerting_activity_summary["creditSummary"]["maxTransactionDate"] or max_date > alerting_activity_summary["creditSummary"]["maxTransactionDate"]:
-                            alerting_activity_summary["creditSummary"]["maxTransactionDate"] = max_date
-                    
-                    # Check if this is the type with highest percentage
-                    if credit_percent > alerting_activity_summary["creditSummary"]["highestPercentValue"]:
-                        alerting_activity_summary["creditSummary"]["highestPercentValue"] = credit_percent
-                        alerting_activity_summary["creditSummary"]["highestPercentType"] = credit_type
-                
-                # Process debit activity
-                debits = activity.get("Debits", [])
-                for debit in debits:
-                    # Update debit summary totals
-                    debit_percent = debit.get("% of Debits", 0)
-                    debit_amount = debit.get("Total ", 0)
-                    debit_count = debit.get("# Transactions ", 0)
-                    min_debit = debit.get("Min Debit Amt.", float('inf'))
-                    max_debit = debit.get("Max Debit Amt.", 0)
-                    min_date = debit.get("Min Txn Date ", "")
-                    max_date = debit.get("Max Txn Date ", "")
-                    debit_type = debit.get("Custom Language", "")
-                    
-                    # Add to debit summary totals
-                    alerting_activity_summary["debitSummary"]["percentTotal"] += debit_percent
-                    alerting_activity_summary["debitSummary"]["amountTotal"] += debit_amount
-                    alerting_activity_summary["debitSummary"]["transactionCount"] += debit_count
-                    
-                    # Update min/max
-                    if min_debit < alerting_activity_summary["debitSummary"]["minDebitAmount"]:
-                        alerting_activity_summary["debitSummary"]["minDebitAmount"] = min_debit
-                    
-                    if max_debit > alerting_activity_summary["debitSummary"]["maxDebitAmount"]:
-                        alerting_activity_summary["debitSummary"]["maxDebitAmount"] = max_debit
-                    
-                    # Update date range
-                    if min_date:
-                        if not alerting_activity_summary["debitSummary"]["minTransactionDate"] or min_date < alerting_activity_summary["debitSummary"]["minTransactionDate"]:
-                            alerting_activity_summary["debitSummary"]["minTransactionDate"] = min_date
-                    
-                    if max_date:
-                        if not alerting_activity_summary["debitSummary"]["maxTransactionDate"] or max_date > alerting_activity_summary["debitSummary"]["maxTransactionDate"]:
-                            alerting_activity_summary["debitSummary"]["maxTransactionDate"] = max_date
-                    
-                    # Check if this is the type with highest percentage
-                    if debit_percent > alerting_activity_summary["debitSummary"]["highestPercentValue"]:
-                        alerting_activity_summary["debitSummary"]["highestPercentValue"] = debit_percent
-                        alerting_activity_summary["debitSummary"]["highestPercentType"] = debit_type
-            
-            break
-    
+    # Process debits
+    debits_by_type = account_activity_summary.get("debitsByType", [])
+    for debit_item in debits_by_type:
+        percent = debit_item.get("percentOfTotal", 0)
+        amount = debit_item.get("totalAmount", 0)
+        count = debit_item.get("transactionCount", 0)
+        min_val = debit_item.get("minTransactionAmount") # Can be None
+        max_val = debit_item.get("maxTransactionAmount") # Can be None
+        min_date = debit_item.get("minTransactionDate", "")
+        max_date = debit_item.get("maxTransactionDate", "")
+        item_type = debit_item.get("type", "")
+
+        output_summary["debitSummary"]["percentTotal"] += percent # Similar concern as credits percentTotal
+        output_summary["debitSummary"]["amountTotal"] += amount
+        output_summary["debitSummary"]["transactionCount"] += count
+        if min_val is not None and min_val < output_summary["debitSummary"]["minDebitAmount"]:
+            output_summary["debitSummary"]["minDebitAmount"] = min_val
+        if max_val is not None and max_val > output_summary["debitSummary"]["maxDebitAmount"]:
+            output_summary["debitSummary"]["maxDebitAmount"] = max_val
+        if min_date and (not output_summary["debitSummary"]["minTransactionDate"] or min_date < output_summary["debitSummary"]["minTransactionDate"]):
+            output_summary["debitSummary"]["minTransactionDate"] = min_date
+        if max_date and (not output_summary["debitSummary"]["maxTransactionDate"] or max_date > output_summary["debitSummary"]["maxTransactionDate"]):
+            output_summary["debitSummary"]["maxTransactionDate"] = max_date
+        if percent > output_summary["debitSummary"]["highestPercentValue"]:
+            output_summary["debitSummary"]["highestPercentValue"] = percent
+            output_summary["debitSummary"]["highestPercentType"] = item_type
+
     # Clean up infinity values
-    if alerting_activity_summary["creditSummary"]["minCreditAmount"] == float('inf'):
-        alerting_activity_summary["creditSummary"]["minCreditAmount"] = 0
+    if output_summary["creditSummary"]["minCreditAmount"] == float('inf'):
+        output_summary["creditSummary"]["minCreditAmount"] = 0
+    if output_summary["debitSummary"]["minDebitAmount"] == float('inf'):
+        output_summary["debitSummary"]["minDebitAmount"] = 0
     
-    if alerting_activity_summary["debitSummary"]["minDebitAmount"] == float('inf'):
-        alerting_activity_summary["debitSummary"]["minDebitAmount"] = 0
-    
-    return alerting_activity_summary
+    return output_summary
 
 def generate_alerting_activity_prompt(alerting_activity_summary):
     """
@@ -292,62 +223,42 @@ def extract_prior_cases_summary(case_data):
     Returns:
         List: List of prior case information
     """
-    prior_cases = []
+    # case_data is now the new standardized case object (a dictionary)
+    prior_sars_new_struct = case_data.get('priorSars', [])
     
-    # Find the Prior Cases/SARs section
-    for section in case_data:
-        if isinstance(section, dict) and section.get("section") == "Prior Cases/SARs":
-            # Look for the priorCases key
-            raw_prior_cases = section.get("priorCases", [])
-            
-            # Process each prior case
-            for prior_case in raw_prior_cases:
-                case_info = {
-                    "case_number": prior_case.get("Case Number", ""),
-                    "case_step": prior_case.get("Case Step", ""),
-                    "alert_ids": [],
-                    "alert_months": [],
-                    "alerting_account": "",
-                    "scope_of_review": {
-                        "start": "",
-                        "end": ""
-                    },
-                    "sar_details": {
-                        "form_number": "",
-                        "filing_date": "",
-                        "amount_reported": 0,
-                        "sar_summary": ""
-                    },
-                    "general_comments": prior_case.get("General Comments", "")
-                }
-                
-                # Extract Alerting Information
-                alerting_info = prior_case.get("Alerting Information", {})
-                if alerting_info:
-                    case_info["alert_ids"] = alerting_info.get("Alert IDs", [])
-                    case_info["alert_months"] = alerting_info.get("Alert Months", [])
-                    case_info["alerting_account"] = alerting_info.get("Alerting Account", "")
-                
-                # Extract Scope of Review
-                scope = prior_case.get("Scope of Review", {})
-                if scope:
-                    case_info["scope_of_review"]["start"] = scope.get("start", "")
-                    case_info["scope_of_review"]["end"] = scope.get("end", "")
-                
-                # Extract SAR Details
-                sar_details = prior_case.get("SAR Details", {})
-                if sar_details:
-                    case_info["sar_details"]["form_number"] = sar_details.get("Form Number", "")
-                    case_info["sar_details"]["filing_date"] = sar_details.get("Filing Date", "")
-                    case_info["sar_details"]["amount_reported"] = sar_details.get("Amount Reported", 0)
-                    case_info["sar_details"]["sar_summary"] = sar_details.get("SAR Summary", "")
-                
-                prior_cases.append(case_info)
-            
-            return prior_cases
+    extracted_prior_cases = []
     
-    # If no Prior Cases/SARs section found
-    return []
+    if not prior_sars_new_struct:
+        return [] # Return empty list if no priorSars in the new structure
+
+    for prior_sar_item in prior_sars_new_struct:
+        if not isinstance(prior_sar_item, dict):
+            continue # Skip if item is not a dictionary
+
+        # Map fields from new structure to the old structure expected by the prompt generator
+        # The old structure was quite detailed. The new 'priorSars' is simpler.
+        # We will only map what's available and keep the rest as default/empty.
+        case_info = {
+            "case_number": prior_sar_item.get("caseNumber", ""),
+            "case_step": "", # Not available in new simple priorSars structure
+            "alert_ids": [], # Not available
+            "alert_months": [], # Not available
+            "alerting_account": "", # Not available
+            "scope_of_review": { # Not available
+                "start": "",
+                "end": ""
+            },
+            "sar_details": {
+                "form_number": prior_sar_item.get("formNumber", ""), # Assuming new field name
+                "filing_date": prior_sar_item.get("filingDate", ""),
+                "amount_reported": prior_sar_item.get("amountReported", 0), # Assuming new field name
+                "sar_summary": prior_sar_item.get("summary", "")
+            },
+            "general_comments": "" # Not available
+        }
+        extracted_prior_cases.append(case_info)
+
+    return extracted_prior_cases
 
 def generate_prior_cases_prompt(prior_cases):
     """

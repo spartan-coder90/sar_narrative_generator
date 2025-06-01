@@ -45,86 +45,69 @@ class DataValidator:
         Returns:
             bool: True (due to relaxed validation).
         """
-        case_number = self.case_data.get("case_number", "")
-        
-        if not case_number:
-            # Attempt to extract case number from the "full_data" structure if not directly available.
-            full_data = self.case_data.get("full_data", [])
-            if full_data:
-                for section in full_data:
-                    if section.get("section") == "Case Information":
-                        case_number = section.get("Case Number", "")
-                        if case_number:
-                            self.case_data["case_number"] = case_number
-                            break
-            
-            if not case_number:
-                # Log that case number is missing, critical for production but allowed in dev.
-                self.missing_required.append("Case number is missing")
-                # Relaxed validation: In a strict mode, this would be `return False`.
-        
+        # Attempt to get case_number from the new standardized structure
+        case_info = self.case_data.get("caseInfo", {})
+        case_number = case_info.get("caseNumber", "")
+
+        if case_number:
+            # For compatibility with fill_missing_data, ensure case_number is also at top level of self.case_data
+            self.case_data["case_number"] = case_number
+        else:
+            # Log that case number is missing.
+            self.missing_required.append("Case number is missing from caseInfo.caseNumber")
+            # Relaxed validation: In a strict mode, this would be `return False`.
+            # For dev purposes, we might still set a placeholder if other parts of the system expect it.
+            # However, the current logic just logs and proceeds.
+            # To maintain previous behavior of having *something* in self.case_data["case_number"] for fill_missing_data:
+            self.case_data["case_number"] = "" # Ensure the key exists if downstream code expects it
+
         # Relaxed validation: Current logic allows any non-empty case number and doesn't enforce specific formats.
         # Always returns True for development.
         return True
     
     def validate_alert_info(self) -> bool:
         """
-        Validate alert information.
+        Validate alert information from self.case_data.alerts.
         This method employs relaxed validation for development purposes.
-        It ensures `alert_info` is a list and attempts to extract it from `full_data` if initially empty.
-        If no alerts are found, a default placeholder alert is created and a warning is logged.
+        It ensures `alert_info` (which is what fill_missing_data expects) is populated
+        by transforming data from self.case_data.get('alerts', []).
+        If no alerts are found, a default placeholder alert is created.
         
         Returns:
             bool: True (due to relaxed validation).
         """
-        alert_info = self.case_data.get("alert_info", [])
-        
-        # Ensure alert_info is a list, even if initially empty or a single dict.
-        if not alert_info:
-            alert_info = []
-            self.case_data["alert_info"] = alert_info
-        if isinstance(alert_info, dict):
-            alert_info = [alert_info]
-            self.case_data["alert_info"] = alert_info
-        
-        # Attempt to extract alert information from "full_data" if `alert_info` is empty.
-        if not alert_info and self.case_data.get("full_data", []):
-            for section in self.case_data["full_data"]:
-                if section.get("section") == "Alerting Details": # Look for "Alerting Details" section
-                    alerts_raw = section.get("alerts", [])
-                    if alerts_raw:
-                        processed_alerts = []
-                        for alert_item in alerts_raw:
-                            alert_obj = {
-                                "alert_id": alert_item.get("Alert ID", ""),
-                                "alert_month": alert_item.get("Alert Month", ""),
-                                "description": alert_item.get("Description", ""),
-                                "review_period": {"start": "", "end": ""}
-                            }
-                            # Parse review period if available in "Start - End" format.
-                            review_period_str = alert_item.get("Review Period", "")
-                            if review_period_str and " - " in review_period_str:
-                                dates = review_period_str.split(" - ")
-                                if len(dates) == 2:
-                                    alert_obj["review_period"]["start"] = dates[0]
-                                    alert_obj["review_period"]["end"] = dates[1]
-                            processed_alerts.append(alert_obj)
-                        self.case_data["alert_info"] = processed_alerts
-                        alert_info = processed_alerts # Update local variable
-                        break
-        
-        # If no alert information is found after attempts, create a default placeholder.
-        if not alert_info:
-            self.warnings.append("Alert information is missing. Adding default alert placeholder.")
-            # Default alert information if none is found in case_data or full_data.
-            self.case_data["alert_info"] = [{
-                "alert_id": "DEFAULT001",
-                "description": "Default alert - No specific alert information found.",
-                "review_period": { # Default review period for the placeholder alert.
-                    "start": "",
-                    "end": ""
+        source_alerts = self.case_data.get("alerts", []) # From new structure
+        processed_alert_info = [] # To be populated in the format expected by fill_missing_data
+
+        if source_alerts and isinstance(source_alerts, list):
+            for alert_item_new_struct in source_alerts:
+                if not isinstance(alert_item_new_struct, dict):
+                    self.warnings.append(f"Skipping non-dict item in source_alerts: {alert_item_new_struct}")
+                    continue
+
+                # Transform to the structure expected by fill_missing_data
+                alert_obj_old_struct = {
+                    "alert_id": alert_item_new_struct.get("alertId", ""),
+                    "alert_month": alert_item_new_struct.get("alertMonth", ""), # Add if needed by templates
+                    "description": alert_item_new_struct.get("description", ""),
+                    "review_period": {
+                        "start": alert_item_new_struct.get("reviewPeriod", {}).get("startDate", ""),
+                        "end": alert_item_new_struct.get("reviewPeriod", {}).get("endDate", "")
+                    }
                 }
-            }]
+                processed_alert_info.append(alert_obj_old_struct)
+
+        if not processed_alert_info:
+            self.warnings.append("Alert information is missing from case_data.alerts. Adding default alert placeholder.")
+            processed_alert_info.append({
+                "alert_id": "DEFAULT001",
+                "alert_month": "", # Default month
+                "description": "Default alert - No specific alert information found.",
+                "review_period": {"start": "", "end": ""}
+            })
+
+        # Store the transformed/defaulted list in self.case_data["alert_info"] for downstream compatibility
+        self.case_data["alert_info"] = processed_alert_info
             
         # Relaxed validation: This method always returns True for development,
         # relying on logging warnings and using defaults for missing data.
@@ -132,198 +115,140 @@ class DataValidator:
     
     def validate_subjects(self) -> bool:
         """
-        Validate subject information.
-        This method employs relaxed validation for development purposes.
-        It attempts to extract subject details from `full_data` (checking "Hogan Search"
-        then "Customer Information" sections) if `subjects` is initially empty.
+        Validate subject information from self.case_data.subjects.
+        This method employs relaxed validation. It transforms subjects from the new
+        structure to the "old" structure expected by fill_missing_data.
         If no subjects are found, a default "UNKNOWN SUBJECT" is created.
         It also ensures at least one subject is marked as primary.
         
         Returns:
             bool: True (due to relaxed validation).
         """
-        subjects = self.case_data.get("subjects", [])
-        
-        # Attempt to extract subject information from "full_data" if `subjects` list is empty.
-        if not subjects and self.case_data.get("full_data", []):
-            # Prioritize "Hogan Search" section for subject data as it's a newer format.
-            for section in self.case_data["full_data"]:
-                if "Hogan Search" in section:
-                    hogan_subjects_raw = section.get("Hogan Search", [])
-                    if hogan_subjects_raw:
-                        processed_subjects = []
-                        for idx, hogan_subject in enumerate(hogan_subjects_raw):
-                            subject = {
-                                "name": hogan_subject.get("Case Subject", ""),
-                                "is_primary": idx == 0,  # Assume first subject from Hogan Search is primary.
-                                "party_key": str(hogan_subject.get("Primary Party Key", "")),
-                                "occupation": "", # Default empty occupation
-                                "employer": "",   # Default empty employer
-                                "nationality": "",# Default empty nationality
-                                "address": "",    # Default empty address
-                                "account_relationship": "" # Default empty relationship
-                            }
-                            processed_subjects.append(subject)
-                        self.case_data["subjects"] = processed_subjects
-                        subjects = processed_subjects # Update local variable
-                        break
-            
-            # If not found in "Hogan Search", try the older "Customer Information" section.
-            if not subjects: # Check if subjects list is still empty
-                for section in self.case_data["full_data"]:
-                    if section.get("section") == "Customer Information":
-                        if "US Bank Customer Information" in section: # Specific sub-key for customer data
-                            customers_raw = section["US Bank Customer Information"]
-                            processed_subjects = []
-                            for idx, customer in enumerate(customers_raw):
-                                subject = {
-                                    "name": customer.get("Primary Party", ""),
-                                    "is_primary": idx == 0,  # Assume first customer is primary.
-                                    "party_key": customer.get("Party Key", ""),
-                                    "occupation": customer.get("Occupation Description", ""),
-                                    "employer": customer.get("Employer", ""),
-                                    "nationality": customer.get("Country of Nationality", ""),
-                                    "address": "", # Default address, to be filled if available
-                                    "account_relationship": "" # Default relationship
-                                }
-                                # Extract first address if available within the customer's address list.
-                                addresses_raw = customer.get("Addresses", [])
-                                if isinstance(addresses_raw, list) and addresses_raw:
-                                    subject["address"] = addresses_raw[0] # Take the first address string
-                                processed_subjects.append(subject)
-                            self.case_data["subjects"] = processed_subjects
-                            subjects = processed_subjects # Update local variable
-                            break
+        source_subjects = self.case_data.get("subjects", []) # From new structure
+        processed_subjects_old_struct = []
 
-        # If no subject information is found after all attempts, create a default placeholder subject.
-        if not subjects:
-            self.warnings.append("Subject information is missing. Adding default 'UNKNOWN SUBJECT'.")
-            # Default subject placeholder if no subjects are found.
-            self.case_data["subjects"] = [{
+        if source_subjects and isinstance(source_subjects, list):
+            for subj_new in source_subjects:
+                if not isinstance(subj_new, dict):
+                    self.warnings.append(f"Skipping non-dict item in source_subjects: {subj_new}")
+                    continue
+
+                # Format address from new structure (list of address objects) to a single string
+                address_str = "N/A"
+                addresses_list = subj_new.get("addresses", [])
+                if addresses_list and isinstance(addresses_list, list) and addresses_list[0]:
+                    first_addr = addresses_list[0]
+                    if isinstance(first_addr, dict): # Expecting address object
+                        # Concatenate parts of the address. Adjust as needed.
+                        address_parts = [
+                            first_addr.get("addressLine1", ""),
+                            first_addr.get("addressLine2", ""),
+                            first_addr.get("city", ""),
+                            first_addr.get("stateOrProvince", ""),
+                            first_addr.get("postalCode", ""),
+                            first_addr.get("countryCode", "")
+                        ]
+                        address_str = ", ".join(filter(None, address_parts))
+                    elif isinstance(first_addr, str): # Fallback if it's just a string
+                        address_str = first_addr
+
+                subject_old_struct = {
+                    "name": subj_new.get("name", ""),
+                    "is_primary": subj_new.get("isPrimary", False),
+                    "party_key": subj_new.get("partyKey", ""),
+                    "occupation": subj_new.get("occupation", ""),
+                    "employer": subj_new.get("employerName", ""), # Mapping from employerName
+                    "nationality": subj_new.get("countryOfNationality", ""), # Mapping
+                    "address": address_str,
+                    "account_relationship": subj_new.get("accountRelationship", "") # Default if not in new struct
+                }
+                processed_subjects_old_struct.append(subject_old_struct)
+
+        if not processed_subjects_old_struct:
+            self.warnings.append("Subject information is missing from case_data.subjects. Adding default 'UNKNOWN SUBJECT'.")
+            processed_subjects_old_struct.append({
                 "name": "UNKNOWN SUBJECT",
-                "is_primary": True, # Mark the default subject as primary.
+                "is_primary": True,
+                "party_key": "",
                 "occupation": "",
                 "employer": "",
-                "address": ""
-            }]
-            subjects = self.case_data["subjects"] # Update local variable
+                "nationality": "",
+                "address": "",
+                "account_relationship": ""
+            })
         
         # Ensure at least one subject is marked as primary.
-        has_primary = any(subject.get("is_primary", False) for subject in subjects)
-        if not has_primary and subjects: # If no primary subject and list is not empty
+        has_primary = any(s.get("is_primary", False) for s in processed_subjects_old_struct)
+        if not has_primary and processed_subjects_old_struct:
             self.warnings.append("No primary subject identified. Setting first subject as primary.")
-            subjects[0]["is_primary"] = True # Designate the first subject as primary.
+            processed_subjects_old_struct[0]["is_primary"] = True
         
-        # Update the main case_data with potentially modified subjects list.
-        self.case_data["subjects"] = subjects
+        # Store the transformed/defaulted list in self.case_data["subjects"] for downstream compatibility
+        self.case_data["subjects"] = processed_subjects_old_struct
         
-        # Relaxed validation: This method always returns True for development.
         return True
     
     def validate_account_info(self) -> bool:
         """
-        Validate account information.
-        This method employs relaxed validation for development purposes.
-        It attempts to extract account details from `full_data` if `account_info`
-        is initially empty or lacks an account number.
-        Defaults are provided for missing fields like account_type and account_number,
-        with warnings logged.
+        Validate account information, sourcing from self.case_data.accounts[0]
+        and transforming to the "old" account_info structure for compatibility.
+        This method employs relaxed validation. Defaults are provided for missing fields,
+        and warnings are logged.
         
         Returns:
             bool: True (due to relaxed validation).
         """
-        account_info = self.case_data.get("account_info", {})
+        accounts_list_new_struct = self.case_data.get("accounts", [])
+        primary_account_new_struct = {}
+        processed_account_info_old_struct = {} # This will hold the transformed data
+
+        if accounts_list_new_struct and isinstance(accounts_list_new_struct, list):
+            primary_account_new_struct = accounts_list_new_struct[0] # Take the first account as primary
+            if not isinstance(primary_account_new_struct, dict):
+                self.warnings.append(f"First item in case_data.accounts is not a dictionary: {primary_account_new_struct}. Using empty default.")
+                primary_account_new_struct = {}
+        else:
+            self.warnings.append("No accounts found in case_data.accounts. Using empty default for primary account.")
+
+        # Transform data from primary_account_new_struct to processed_account_info_old_struct
+        processed_account_info_old_struct = {
+            "account_number": str(primary_account_new_struct.get("accountKey", "")),
+            "account_type": ", ".join(primary_account_new_struct.get("accountTypes", [])),
+            "account_title": primary_account_new_struct.get("accountTitle", ""),
+            "open_date": primary_account_new_struct.get("openingDate", ""),
+            "close_date": primary_account_new_struct.get("closingDate", ""), # Not in example, default to ""
+            "status": primary_account_new_struct.get("statusDescription", ""),
+            "related_parties": [], # Default, as new structure's relatedParties might differ or be absent
+            "branch": primary_account_new_struct.get("branchName", "") # Assuming 'branchName', default to ""
+        }
         
-        # Attempt to extract account information from "full_data" if current `account_info` is minimal or empty.
-        # This targets scenarios where account_number might be missing.
-        if (not account_info or not account_info.get("account_number")) and self.case_data.get("full_data", []):
-            for section in self.case_data["full_data"]:
-                if section.get("section") == "Account Information": # Look for "Account Information" section
-                    # Check for "Accounts" sub-section (newer format)
-                    if "Accounts" in section and section["Accounts"]:
-                        account_raw = section["Accounts"][0]  # Take the first account found.
-                        account_info = {
-                            "account_number": account_raw.get("Account Key", ""),
-                            "account_type": ", ".join(account_raw.get("Account Type", [])) if isinstance(account_raw.get("Account Type"), list) else account_raw.get("Account Type", ""),
-                            "account_title": account_raw.get("Account Title", ""),
-                            "open_date": account_raw.get("Account Opening Date & Branch", ""), # This might contain branch info too.
-                            "close_date": account_raw.get("Account Closing Date", ""),
-                            "status": account_raw.get("Status Description", ""),
-                            "related_parties": [],
-                            "branch": account_raw.get("Account Holding Branch", "")
-                        }
-                        # Process related parties from the raw data.
-                        parties_raw = account_raw.get("Related Parties", [])
-                        if isinstance(parties_raw, list):
-                            for party_str in parties_raw:
-                                parts = party_str.split(" (") # Expects "Name (Role)" format.
-                                if len(parts) == 2:
-                                    name = parts[0].strip()
-                                    role = parts[1].strip().rstrip(")")
-                                    account_info["related_parties"].append({"name": name, "role": role})
-                                else: # Fallback if format is unexpected.
-                                    account_info["related_parties"].append({"name": party_str, "role": ""})
-                        self.case_data["account_info"] = account_info
-                        break # Found in "Accounts", exit loop.
-                    # Check for "accountInformation" sub-section (older format)
-                    elif "accountInformation" in section and "Account" in section["accountInformation"]:
-                        account_raw = section["accountInformation"]["Account"]
-                        account_info = {
-                            "account_number": account_raw.get("Account Key", ""),
-                            "account_type": ", ".join(account_raw.get("Types", [])) if isinstance(account_raw.get("Types"), list) else account_raw.get("Types", ""),
-                            "account_title": account_raw.get("Title", ""),
-                            "status": account_raw.get("Status", {}).get("Description", "") if "Status" in account_raw else "",
-                            "related_parties": [],
-                            "branch": "" # Branch info might be in "Opening" for this format.
-                        }
-                        # Extract opening date and branch if available.
-                        if "Opening" in account_raw:
-                            account_info["open_date"] = account_raw["Opening"].get("Date", "")
-                            account_info["branch"] = account_raw["Opening"].get("Branch", "")
-                        account_info["close_date"] = account_raw.get("Closing Date", "") # Closing date.
-                        # Process related parties.
-                        parties_raw = account_raw.get("Related Parties", [])
-                        if isinstance(parties_raw, list):
-                            for party_str in parties_raw: # Simpler party format here.
-                                account_info["related_parties"].append({"name": party_str, "role": ""})
-                        self.case_data["account_info"] = account_info
-                        break # Found in "accountInformation", exit loop.
-        
-        # If account_info is still essentially empty after extraction attempts, create a default structure.
-        if not account_info or not account_info.get("account_number"): # Check again as extraction might have failed
-            self.warnings.append("Account information (especially account number) is missing. Using default structure.")
-            # Default account_info structure if no data is found.
-            account_info = {
-                "account_number": "", # To be filled by later logic if possible
-                "account_type": "Unknown Account",
-                "status": "Unknown Status",
-                "open_date": "", "close_date": "", "account_title": "", "related_parties": [], "branch": ""
-            }
-            self.case_data["account_info"] = account_info # Assign default to case_data
-        
-        # Default for account_type if missing.
-        if not account_info.get("account_type"):
-            self.warnings.append("Account type is missing, defaulting to 'checking/savings account'.")
-            account_info["account_type"] = "checking/savings account"
-        
-        # Default for account_number if missing.
+        # If relatedParties exists in new structure and needs specific transformation:
+        # new_related_parties = primary_account_new_struct.get("relatedParties", [])
+        # for party_new in new_related_parties:
+        #    processed_account_info_old_struct["related_parties"].append({"name": party_new.get("name"), "role": party_new.get("role")})
+
+
+        # Default for account_type if missing or empty after transformation
+        if not processed_account_info_old_struct.get("account_type"):
+            self.warnings.append("Account type is missing after transformation. Defaulting to 'checking/savings account'.")
+            processed_account_info_old_struct["account_type"] = "checking/savings account"
+
+        # Default for account_number if missing after transformation.
         # Attempts to derive from `excel_data.account_summaries` as a last resort.
-        if not account_info.get("account_number"):
-            self.warnings.append("Account number is missing.")
+        if not processed_account_info_old_struct.get("account_number"):
+            self.warnings.append("Account number is missing after transformation. Attempting to derive from excel_data.")
             account_summaries = self.excel_data.get("account_summaries", {})
             if account_summaries and isinstance(account_summaries, dict) and len(account_summaries) > 0:
-                # Take the first account number found in account_summaries keys.
                 derived_account_number = next(iter(account_summaries.keys()), "UNKNOWN_ACC_FROM_SUM")
-                account_info["account_number"] = derived_account_number
+                processed_account_info_old_struct["account_number"] = derived_account_number
                 self.warnings.append(f"Derived account number '{derived_account_number}' from account_summaries.")
             else: # Final fallback if no derivation is possible.
-                account_info["account_number"] = "ACC_NUM_MISSING"
+                processed_account_info_old_struct["account_number"] = "ACC_NUM_MISSING"
                 self.warnings.append("Could not derive account number, set to 'ACC_NUM_MISSING'.")
-
-        # Ensure the potentially modified account_info is stored back.
-        self.case_data["account_info"] = account_info
         
-        # Relaxed validation: Always returns True for development.
+        # Store the transformed/defaulted account_info in self.case_data["account_info"] for downstream compatibility
+        self.case_data["account_info"] = processed_account_info_old_struct
+
         return True
     
     def validate_transaction_data(self) -> bool:
@@ -425,28 +350,31 @@ class DataValidator:
         # 5. Hardcoded default ("01/01/2023" for start, current date for end)
 
         # Helper to get dates from various sources
-        def get_date_from_sources(date_key: str, default_value: str) -> str:
-            # Source 1: case_data.review_period
-            review_period_data = self.case_data.get("review_period", {})
-            if review_period_data.get(date_key): return review_period_data[date_key]
+        def get_date_from_sources(date_key_internal: str, default_value: str) -> str:
+            # date_key_internal is "start" or "end"
+            # Map to new structure keys "startDate" or "endDate"
+            date_key_new_struct = "startDate" if date_key_internal == "start" else "endDate"
+
+            # Source 1: self.case_data.caseInfo.reviewPeriod (New Structure)
+            case_info_data = self.case_data.get("caseInfo", {})
+            review_period_new_struct = case_info_data.get("reviewPeriod", {})
+            if review_period_new_struct.get(date_key_new_struct):
+                return review_period_new_struct[date_key_new_struct]
             
-            # Source 2: case_data.alert_info[0].review_period
-            alert_info_list = self.case_data.get("alert_info", [])
+            # Source 2: self.case_data.alert_info[0].review_period
+            # This uses self.case_data["alert_info"] which validate_alert_info already transformed
+            # to the "old" structure with "start"/"end" keys.
+            alert_info_list = self.case_data.get("alert_info", []) # Already transformed by validate_alert_info
             first_alert = alert_info_list[0] if alert_info_list and isinstance(alert_info_list,list) else {}
             alert_review_period = first_alert.get("review_period", {}) if isinstance(first_alert, dict) else {}
-            if alert_review_period.get(date_key): return alert_review_period[date_key]
+            if alert_review_period.get(date_key_internal): # Uses "start" or "end"
+                return alert_review_period[date_key_internal]
             
-            # Source 3 & 4: case_data.full_data
-            full_data_list = self.case_data.get("full_data", [])
-            for section in full_data_list:
-                if section.get("section") == "Scope of Review": # Source 3
-                    if section.get("Start Date" if date_key == "start" else "End Date"):
-                        return section["Start Date" if date_key == "start" else "End Date"]
-                if section.get("section") == "Account Information": # Source 4
-                    review_period_str = section.get("Case Review Period", "")
-                    if review_period_str and " - " in review_period_str:
-                        dates = review_period_str.split(" - ")
-                        if len(dates) == 2: return dates[0] if date_key == "start" else dates[1]
+            # Sources 3 & 4 (full_data) are removed as full_data is deprecated.
+            # If reviewPeriod was not in caseInfo, and not in the first alert,
+            # it will fall through to default_value.
+            # Add a log if no date is found from primary sources.
+            logger.warning(f"Date for '{date_key_internal}' not found in caseInfo.reviewPeriod or first alert's review_period.")
             return default_value # Source 5: Hardcoded default
 
         if not activity_summary.get("start_date"):
@@ -505,23 +433,26 @@ class DataValidator:
         if not samples: # If the 'transactions' list is missing or empty.
             self.warnings.append("No unusual activity samples found. Attempting to derive.")
             derived_samples = []
-            # Attempt 1: Extract from `case_data.full_data` "Unusual Activity" section.
-            full_data_list = self.case_data.get("full_data", [])
-            for section in full_data_list:
-                if "Unusual Activity" in section: # Section key
-                    unusual_activity_raw_samples = section.get("Unusual Activity", []) # List of samples
-                    if unusual_activity_raw_samples:
-                        for sample_item in unusual_activity_raw_samples:
-                            derived_samples.append({
-                                "date": sample_item.get("Transaction Date", ""),
-                                "amount": sample_item.get("Transaction Amount", 0), # Assuming this needs to_float if string
-                                "type": sample_item.get("Custom Language", ""),
-                                "description": sample_item.get("Memo", ""),
-                                "account": str(sample_item.get("Account", ""))
-                            })
-                        break # Found samples in full_data
             
-            # Attempt 2: If no samples from full_data, try to derive from `excel_data.transaction_summary`.
+            # Attempt 1: Extract from `self.case_data.transactions.unusualActivitySample` (New Structure)
+            transactions_data_new_struct = self.case_data.get("transactions", {})
+            unusual_activity_sample_new_struct = transactions_data_new_struct.get("unusualActivitySample", [])
+
+            if unusual_activity_sample_new_struct:
+                for sample_item_new in unusual_activity_sample_new_struct:
+                    if not isinstance(sample_item_new, dict): continue
+                    # Map new structure fields to the structure expected by `derived_samples`
+                    derived_samples.append({
+                        "date": sample_item_new.get("date", ""),
+                        "amount": sample_item_new.get("amount", 0),
+                        "type": sample_item_new.get("transactionType", sample_item_new.get("description","N/A")), # Or specific type field
+                        "description": sample_item_new.get("description", ""),
+                        "account": str(sample_item_new.get("accountKey", ""))
+                    })
+                if derived_samples:
+                     self.warnings.append(f"Derived {len(derived_samples)} unusual activity samples from case_data.transactions.unusualActivitySample.")
+
+            # Attempt 2: If no samples from new structure, try to derive from `excel_data.transaction_summary`.
             if not derived_samples:
                 transaction_summary = self.excel_data.get("transaction_summary", {})
                 if transaction_summary:
@@ -643,14 +574,25 @@ class DataValidator:
         
         # Step 2: Combine data from case_data and excel_data.
         # Start with fields primarily from case_data.
+        # Note: case_number, alert_info, subjects, account_info are already transformed/set up
+        # by their respective validate_* methods to be in the format fill_missing_data expects.
+
+        # Get review_period from the new structure and map it for combined_data
+        case_info_data = self.case_data.get("caseInfo", {})
+        review_period_new_struct = case_info_data.get("reviewPeriod", {})
+        review_period_for_combined = {
+            "start": review_period_new_struct.get("startDate", ""),
+            "end": review_period_new_struct.get("endDate", "")
+        }
+
         combined_data = {
-            "case_number": self.case_data.get("case_number", ""),
-            "alert_info": self.case_data.get("alert_info", []),
-            "subjects": self.case_data.get("subjects", []),
-            "account_info": self.case_data.get("account_info", {}),
-            "prior_cases": self.case_data.get("prior_cases", []),
-            "database_searches": self.case_data.get("database_searches", {}),
-            "review_period": self.case_data.get("review_period", {}) # review_period from case_data
+            "case_number": self.case_data.get("case_number", ""), # Already set by validate_case_number
+            "alert_info": self.case_data.get("alert_info", []),   # Already set/transformed by validate_alert_info
+            "subjects": self.case_data.get("subjects", []),     # Already set/transformed by validate_subjects
+            "account_info": self.case_data.get("account_info", {}), # Already set/transformed by validate_account_info
+            "prior_cases": self.case_data.get('priorSars', []), # New path
+            "database_searches": self.case_data.get('databaseSearches', {}), # New path
+            "review_period": review_period_for_combined # Mapped from new structure
         }
 
         # Add fields primarily from excel_data.

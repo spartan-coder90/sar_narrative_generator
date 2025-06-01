@@ -297,16 +297,21 @@ class NarrativeGenerator:
             return "No prior SARs were identified for the subjects or account."
         
         prior_cases_text = ""
-        for case in prior_cases:
+        for case in prior_cases: # prior_cases items are now structured by extract_prior_cases_summary
             case_number = case.get("case_number", "")
-            filing_date = case.get("filing_date", "")
-            summary = case.get("summary", "")
-            alert_ids = case.get("alert_id", [])
+            sar_details = case.get("sar_details", {})
+            filing_date = self.format_date(sar_details.get("filing_date", "")) # Format date
+            summary = sar_details.get("sar_summary", "")
+            # alert_ids and review_period are defaulted to empty by extract_prior_cases_summary if not in new source
+            alert_ids = case.get("alert_ids", [])
             review_period = case.get("review_period", {})
             
-            prior_cases_text += f"Case # {case_number}: Alerting account # reviewed from {review_period.get('start', '')} to {review_period.get('end', '')} due to {', '.join(alert_ids) if alert_ids else 'unknown alerting activity'}.\n"
-            prior_cases_text += f"SAR filed on {filing_date}: {summary}\n\n"
-        
+            prior_cases_text += f"Case # {case_number}: Alerting account # reviewed from {self.format_date(review_period.get('start', ''))} to {self.format_date(review_period.get('end', ''))} due to {', '.join(alert_ids) if alert_ids else 'details not available in new format'}.\n"
+            if filing_date or summary: # Only add SAR line if there are details
+                prior_cases_text += f"SAR filed on {filing_date}: {summary}\n\n"
+            else:
+                prior_cases_text += "SAR details not fully available in new format.\n\n"
+
         return prior_cases_text
     
     def generate_account_subject_info(self) -> str:
@@ -333,15 +338,15 @@ class NarrativeGenerator:
         subject_text = "\n\n"
         foreign_subjects = []
         
-        for subject in subjects:
-            if not isinstance(subject, dict):
+        for subject_item in subjects: # Renamed to avoid confusion with outer 'subjects'
+            if not isinstance(subject_item, dict):
                 continue
                 
-            subject_name = subject.get("name", "")
-            occupation = subject.get("occupation", "")
-            employer = subject.get("employer", "")
-            relationship = subject.get("account_relationship", "")
-            nationality = subject.get("nationality", "")
+            subject_name = subject_item.get("name", "")
+            occupation = subject_item.get("occupation", "N/A")
+            employer = subject_item.get("employer", "N/A")
+            relationship = subject_item.get("account_relationship", "") # This is from old structure, kept by DataValidator
+            nationality = subject_item.get("nationality", "") # This is from old structure, kept by DataValidator
             
             subject_text += f"{subject_name} is employed as a {occupation} at {employer}. "
             
@@ -350,20 +355,41 @@ class NarrativeGenerator:
             
             subject_text += "\n\n"
             
-            # Track foreign nationals for separate section
-            if nationality and nationality not in ["US", "USA", "United States"]:
-                foreign_subjects.append(subject)
+            if nationality and nationality.upper() not in ["US", "USA", "UNITED STATES"]:
+                foreign_subjects.append(subject_item)
         
         # Add section for foreign nationals if any
         if foreign_subjects:
             subject_text += "The following foreign nationalities and identifications were identified:\n\n"
-            
-            for subject in foreign_subjects:
-                subject_name = subject.get("name", "")
-                nationality = subject.get("nationality", "")
-                
-                subject_text += f"{subject_name}: {nationality}, [INVESTIGATOR TO INSERT ID TYPE] # [INVESTIGATOR TO INSERT ID NUMBER] issued on [ISSUE DATE] and expires on [EXPIRATION DATE].\n\n"
+            for fs in foreign_subjects: # Renamed to avoid confusion
+                subject_text += f"{fs.get('name', '')}: {fs.get('nationality', '')}, [INVESTIGATOR TO INSERT ID TYPE] # [INVESTIGATOR TO INSERT ID NUMBER] issued on [ISSUE DATE] and expires on [EXPIRATION DATE].\n\n"
+
+        # Database Searches
+        db_searches_new_struct = self.data.get("database_searches", {})
+        kyc_results_text = "KYC Database: "
+        kyc_db_list = db_searches_new_struct.get("kycDatabase", [])
+        if kyc_db_list:
+            kyc_items = []
+            for item in kyc_db_list:
+                kyc_items.append(f"{item.get('subjectName', 'N/A')} - Link: {item.get('webKycFormLink', 'N/A')}")
+            kyc_results_text += "; ".join(kyc_items) if kyc_items else "No results."
+        else:
+            kyc_results_text += "No results found or not searched."
         
+        adverse_media_text = f"Adverse Media Review: {db_searches_new_struct.get('adverseMediaReview', 'No adverse media found or not searched.')}"
+
+        risk_ratings_text = "Risk Ratings: "
+        risk_ratings_list = db_searches_new_struct.get("riskRatings", [])
+        if risk_ratings_list:
+            risk_items = []
+            for item in risk_ratings_list:
+                risk_items.append(f"{item.get('subjectName', 'N/A')} - Rating: {item.get('partyRiskRating', 'N/A')}")
+            risk_ratings_text += "; ".join(risk_items) if risk_items else "No ratings found."
+        else:
+            risk_ratings_text += "No risk ratings found or not searched."
+
+        subject_text += f"\n{kyc_results_text}\n{adverse_media_text}\n{risk_ratings_text}\n\n"
+
         # Create the prompt for account-subject info
         prompt = f"""
         Write Section 3 - Account/Subject Information based ONLY on the following information:
@@ -371,16 +397,17 @@ class NarrativeGenerator:
         ACCOUNT INFORMATION:
         {account_text}
         
-        SUBJECT INFORMATION:
+        SUBJECT INFORMATION (including database searches):
         {subject_text}
         
         Your response should include:
-        1. Account details including type, number, opening date, and status (open or closed)
-        2. If closed, the reason, where funds were moved, and method
-        3. Information about all subjects including name, occupation, employer, and relationship to account
-        4. Detailed information about any foreign nationals including their nationality and identification documents
+        1. Account details including type, number, opening date, and status (open or closed).
+        2. If closed, the reason, where funds were moved, and method (if available).
+        3. Information about all subjects including name, occupation, employer, and relationship to account.
+        4. Results from database searches (KYC, Adverse Media, Risk Ratings).
+        5. Detailed information about any foreign nationals including their nationality and identification documents (placeholder for ID details).
         
-        Organize the section clearly with account information first, followed by subject information, and finally foreign national details if applicable.
+        Organize the section clearly with account information first, followed by subject information (including their professional details, relationship, database search results, and then foreign national details if applicable).
         """
         
         # Try to generate with LLM

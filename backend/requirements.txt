@@ -18,3 +18,4 @@ flask>=2.2.0
 # Langchain for LLM integration
 langchain
 langchain-community
+langchain-ollama

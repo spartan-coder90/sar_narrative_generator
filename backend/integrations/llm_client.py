@@ -8,7 +8,7 @@ import backend.config as config
 # Langchain imports
 from langchain_community.chat_models import ChatOpenAI # Updated import
 from langchain_community.chat_models.azure_openai import AzureChatOpenAI # Updated import
-from langchain_community.llms import Ollama # Updated import
+from langchain_ollama import OllamaLLM # Updated import for Ollama
 from langchain.schema import HumanMessage, SystemMessage
 # Removed unused import: from langchain.callbacks.base import BaseCallbackHandler
 
@@ -69,7 +69,7 @@ class LLMClient:
         """
         # For Llama models (using Ollama)
         if self.model.startswith("llama"):
-            return Ollama(
+            return OllamaLLM( # Changed to OllamaLLM
                 model=self.model,
                 base_url=self.endpoint
             )

@@ -17,7 +17,7 @@ def to_float(value: Any) -> float:
 
     Args:
         value: The value to convert. Can be None, int, float, or str.
-    
+
     Returns:
         The float representation of the value, or 0.0 on failure.
     Returns 0.0 if conversion fails or the input value is None or an unhandled type.
@@ -28,7 +28,7 @@ def to_float(value: Any) -> float:
         return float(value)
     if not isinstance(value, str): # If not a string and not a number/None, return 0.0
         return 0.0
-    
+
     # For strings: remove currency symbols, commas, and whitespace
     cleaned_value = re.sub(r'[$\s,]', '', value)
     if not cleaned_value: # If string becomes empty after cleaning
@@ -58,7 +58,7 @@ def to_int(value: Any) -> int:
         return int(value)
     if not isinstance(value, str): # If not a string and not a number/None, return 0
         return 0
-        
+
     # For strings: remove currency symbols, commas, and whitespace
     cleaned_value = re.sub(r'[$\s,]', '', value)
     if not cleaned_value:
@@ -108,7 +108,7 @@ def compare_dates(date1_str: str, date2_str: str, mode: str = 'earliest') -> str
             break # Successfully parsed, exit loop.
         except (ValueError, TypeError):
             continue # Try next format.
-            
+
     # Attempt to parse the second date string.
     for fmt in possible_formats:
         try:
@@ -130,7 +130,7 @@ def compare_dates(date1_str: str, date2_str: str, mode: str = 'earliest') -> str
         return date1_str if dt1 < dt2 else date2_str
     elif mode == 'latest':
         return date1_str if dt1 > dt2 else date2_str
-    
+
     # Should not be reached if mode is correctly 'earliest' or 'latest'.
     # Consider raising an error for invalid mode if strictness is desired.
     return None

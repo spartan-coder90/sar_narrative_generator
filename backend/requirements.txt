@@ -14,3 +14,7 @@ nltk>=3.7
 
 # Web framework (if you're building a web API)
 flask>=2.2.0
+
+# Langchain for LLM integration
+langchain
+langchain-community

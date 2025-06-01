@@ -11,6 +11,7 @@ from datetime import datetime
 # from werkzeug.utils import secure_filename # Unused import
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
+from typing import Optional, Dict, Any, Tuple # Added missing typing imports
 
 # Add the parent directory to Python path so imports work
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -84,20 +85,20 @@ def _load_session_data(session_id: str, upload_folder_path: str) -> tuple[Option
     # Validate session ID format to prevent directory traversal or invalid inputs.
     if not re.match(r'^[0-9a-f\-]+$', session_id):
         return None, {"status": "error", "message": "Invalid session ID format"}, 400
-        
+
     data_path = os.path.join(upload_folder_path, session_id, 'data.json')
-    
+
     # Check if the session data file exists.
     if not os.path.exists(data_path):
         return None, {"status": "error", "message": "Session not found"}, 404
-    
+
     # Check if the session data file is empty.
     if os.path.getsize(data_path) == 0:
         logger.warning(f"Empty data file found: {data_path}")
         # Frontend might expect a 200 with specific error structure for some cases.
         # Adjust status code if a different error handling is preferred for empty files.
-        return None, {"status": "error", "message": "Empty data file"}, 200 
-            
+        return None, {"status": "error", "message": "Empty data file"}, 200
+
     try:
         # Load and parse the JSON data from the file.
         loaded_data = load_from_json_file(data_path)
@@ -115,7 +116,7 @@ def health_check():
     """
     Health check endpoint.
     Provides a simple status check for the application.
-    
+
     Returns:
         JSON response with application status and version.
     """
@@ -129,7 +130,7 @@ def get_available_case_list():
     """
     Retrieves a list of available cases for UI selection.
     Calls `get_available_cases` from the case repository.
-    
+
     Returns:
         JSON response containing a list of case summaries or an error message.
     """
@@ -153,9 +154,9 @@ def generate_from_case():
     
     Request JSON Body:
     - `case_number` (str): The unique identifier for the case to process.
-    - `model` (str, optional): The identifier for the LLM model to be used for generation 
+    - `model` (str, optional): The identifier for the LLM model to be used for generation
                                (e.g., 'llama3:8b', 'gpt-4'). Defaults if not provided or invalid.
-    
+
     Key Processing Steps:
     1. Retrieves case data using `get_case` and `get_full_case` from the case repository.
     2. Creates a unique session ID and folder to store processed data.
@@ -518,7 +519,7 @@ def get_alerting_activity(session_id: str):
                 "generatedSummary": ""
             }), 200 # Or a more appropriate error code like 400/500 if frontend handles it
         return jsonify(error_response), status_code
-    
+
     # Proceed if data is loaded successfully.
     try:
         if not data: # Should be caught by _load_session_data, but as a safeguard.
@@ -1108,7 +1109,7 @@ def export_narrative(session_id):
     try:
         if not data or "case_data" not in data or "sections" not in data:
              return jsonify({"status": "error", "message": "Required data for export missing in session."}), 500
-        
+
         case_data = data["case_data"]
         sections = data["sections"]
         
@@ -1187,7 +1188,7 @@ def export_recommendation(session_id):
     try:
         if not data or "case_data" not in data or "recommendation" not in data:
              return jsonify({"status": "error", "message": "Required data for recommendation export missing in session."}), 404
-        
+
         case_data = data["case_data"]
         
         # Check if recommendation exists

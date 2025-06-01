@@ -6,9 +6,9 @@ from backend.utils.logger import get_logger
 import backend.config as config
 
 # Langchain imports
-from langchain.chat_models import ChatOpenAI
-from langchain.chat_models.azure_openai import AzureChatOpenAI
-from langchain.llms.ollama import Ollama
+from langchain_community.chat_models import ChatOpenAI # Updated import
+from langchain_community.chat_models.azure_openai import AzureChatOpenAI # Updated import
+from langchain_community.llms import Ollama # Updated import
 from langchain.schema import HumanMessage, SystemMessage
 # Removed unused import: from langchain.callbacks.base import BaseCallbackHandler
 
@@ -216,17 +216,17 @@ class LLMClient:
         # Score based on specific structuring patterns from unusual activity data.
         unusual_activity_data = data.get("unusual_activity", {})
         transactions = unusual_activity_data.get("transactions", [])
-        
+
         # Check for multiple transactions just below the $10,000 CTR (Currency Transaction Report) threshold.
         # This is a common structuring pattern.
         below_threshold_transaction_count = sum(
-            1 for txn in transactions 
+            1 for txn in transactions
             if isinstance(txn.get("amount"), (int, float)) and 8000 < txn.get("amount", 0) < 10000
         )
-        
+
         if below_threshold_transaction_count >= 2: # If two or more such transactions exist
             scores["STRUCTURING"] += 3 # Significantly increase structuring score
-        
+
         # --- Determine Best Match and Fallback ---
         # Select the activity type with the highest score.
         # If all scores are zero (no indicators found), default to "UNUSUAL_ACH".

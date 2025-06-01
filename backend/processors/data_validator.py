@@ -166,7 +166,7 @@ class DataValidator:
                             processed_subjects.append(subject)
                         self.case_data["subjects"] = processed_subjects
                         subjects = processed_subjects # Update local variable
-                        break 
+                        break
             
             # If not found in "Hogan Search", try the older "Customer Information" section.
             if not subjects: # Check if subjects list is still empty
@@ -193,8 +193,8 @@ class DataValidator:
                                 processed_subjects.append(subject)
                             self.case_data["subjects"] = processed_subjects
                             subjects = processed_subjects # Update local variable
-                            break 
-        
+                            break
+
         # If no subject information is found after all attempts, create a default placeholder subject.
         if not subjects:
             self.warnings.append("Subject information is missing. Adding default 'UNKNOWN SUBJECT'.")
@@ -319,7 +319,7 @@ class DataValidator:
             else: # Final fallback if no derivation is possible.
                 account_info["account_number"] = "ACC_NUM_MISSING"
                 self.warnings.append("Could not derive account number, set to 'ACC_NUM_MISSING'.")
-        
+
         # Ensure the potentially modified account_info is stored back.
         self.case_data["account_info"] = account_info
         
@@ -413,7 +413,7 @@ class DataValidator:
             else: # If no transaction_summary to derive from.
                 activity_summary["total_amount"] = 0.0 # Fallback to 0.0.
                 self.warnings.append("No transaction_summary to derive total_amount. Set to 0.0.")
-        
+
         # Validate and default 'start_date' and 'end_date'.
         # Attempts to derive from `case_data` (review_period, alert_info, full_data sections)
         # before using hardcoded defaults.
@@ -423,7 +423,7 @@ class DataValidator:
         # 3. case_data.full_data ("Scope of Review" section)
         # 4. case_data.full_data ("Account Information" section's "Case Review Period")
         # 5. Hardcoded default ("01/01/2023" for start, current date for end)
-        
+
         # Helper to get dates from various sources
         def get_date_from_sources(date_key: str, default_value: str) -> str:
             # Source 1: case_data.review_period
@@ -573,7 +573,7 @@ class DataValidator:
         always returns `True` to allow processing even with incomplete data during development.
         
         Returns:
-            Tuple: (is_valid, errors, warnings) 
+            Tuple: (is_valid, errors, warnings)
                    - `is_valid` is always True in relaxed mode.
                    - `errors` contains a list of missing required fields.
                    - `warnings` contains a list of non-critical issues or applied defaults.
@@ -582,7 +582,7 @@ class DataValidator:
         self.validation_errors = [] # Intended for hard errors, less used in relaxed mode.
         self.missing_required = []# For fields deemed essential even in relaxed mode (e.g. case_number).
         self.warnings = []         # For applied defaults or non-critical missing data.
-        
+
         # Call individual validation methods. These methods will populate
         # `self.missing_required` and `self.warnings` and may modify
         # `self.case_data` and `self.excel_data` by filling in defaults.
@@ -605,18 +605,18 @@ class DataValidator:
             logger.error(f"Validation - Missing required fields: {self.missing_required}")
         if self.warnings:
             logger.warning(f"Validation - Warnings: {self.warnings}")
-            
+
         return True, errors, self.warnings
     
     def fill_missing_data(self) -> Dict[str, Any]:
         """
         Fills in missing data by first running the validation process (which applies
         defaults and logs warnings due to its relaxed nature) and then combines
-        `case_data` and `excel_data`. 
-        
+        `case_data` and `excel_data`.
+
         This method further ensures critical fields in the `combined_data` dictionary,
-        such as dates and total amounts for `activity_summary`, `review_period`, 
-        and the first alert's `review_period`, are populated with defaults if they 
+        such as dates and total amounts for `activity_summary`, `review_period`,
+        and the first alert's `review_period`, are populated with defaults if they
         are still missing after the initial validation and defaulting pass.
 
         The process is as follows:
@@ -630,7 +630,7 @@ class DataValidator:
            - `activity_summary.total_amount` (derived from `transaction_summary` or hardcoded).
            - `activity_summary.start_date` and `activity_summary.end_date` (hardcoded defaults).
            - `review_period.start` and `review_period.end` (aligned with `activity_summary` dates).
-           - `alert_info[0].review_period.start` and `alert_info[0].review_period.end` 
+           - `alert_info[0].review_period.start` and `alert_info[0].review_period.end`
              (aligned with `activity_summary` dates if the first alert exists).
         
         Returns:
@@ -652,7 +652,7 @@ class DataValidator:
             "database_searches": self.case_data.get("database_searches", {}),
             "review_period": self.case_data.get("review_period", {}) # review_period from case_data
         }
-        
+
         # Add fields primarily from excel_data.
         combined_data.update({
             "activity_summary": self.excel_data.get("activity_summary", {}),
@@ -663,15 +663,15 @@ class DataValidator:
             "account_summaries": self.excel_data.get("account_summaries", {}),
             "inter_account_transfers": self.excel_data.get("inter_account_transfers", [])
         })
-        
+
         # Step 3: Final Defaulting Pass for critical combined_data fields.
-        
+
         # Ensure 'activity_summary' exists and is a dictionary.
         if not isinstance(combined_data.get("activity_summary"), dict):
             self.warnings.append("Combined_data 'activity_summary' was not a dict. Initializing.")
             combined_data["activity_summary"] = {}
         activity_summary = combined_data["activity_summary"] # Get a reference
-        
+
         # Default for 'activity_summary.total_amount' if missing or non-positive.
         # Attempts to derive from 'transaction_summary' before using a hardcoded fallback.
         if activity_summary.get("total_amount", 0) <= 0:
@@ -687,32 +687,32 @@ class DataValidator:
                     activity_summary["total_amount"] = 1000.0  # Hardcoded fallback if derivation yields zero.
             else: # If no transaction_summary to derive from.
                 activity_summary["total_amount"] = 1000.0  # Hardcoded fallback.
-        
+
         # Default for 'activity_summary.start_date' if missing.
         if not activity_summary.get("start_date"):
             self.warnings.append("Activity summary start_date missing in combined_data. Applying default '01/01/2023'.")
             activity_summary["start_date"] = "01/01/2023"  # Default fallback.
-            
+
         # Default for 'activity_summary.end_date' if missing.
         if not activity_summary.get("end_date"):
             default_end_date = datetime.now().strftime("%m/%d/%Y")
             self.warnings.append(f"Activity summary end_date missing in combined_data. Applying default (today): {default_end_date}.")
             activity_summary["end_date"] = default_end_date # Default to current date.
-            
+
         # Ensure 'review_period' exists and align its dates with 'activity_summary' if missing.
         review_period = combined_data.get("review_period", {})
         if not isinstance(review_period, dict): # Ensure review_period is a dict
             review_period = {}
             combined_data["review_period"] = review_period
             self.warnings.append("Combined_data 'review_period' was not a dict. Initializing.")
-        
+
         if not review_period.get("start"):
             review_period["start"] = activity_summary["start_date"] # Align with activity_summary
             self.warnings.append("Review period start date missing. Aligned with activity_summary start_date.")
         if not review_period.get("end"):
             review_period["end"] = activity_summary["end_date"] # Align with activity_summary
             self.warnings.append("Review period end date missing. Aligned with activity_summary end_date.")
-            
+
         # Ensure the first alert in 'alert_info' (if any) has its 'review_period' dates aligned.
         alert_info_list = combined_data.get("alert_info", [])
         if alert_info_list and isinstance(alert_info_list, list) and alert_info_list[0]: # Check if list and has first element
@@ -720,16 +720,16 @@ class DataValidator:
             if not isinstance(first_alert.get("review_period"), dict): # Ensure review_period in alert is a dict
                 first_alert["review_period"] = {}
                 self.warnings.append("First alert's review_period was not a dict. Initializing.")
-            
+
             if not first_alert["review_period"].get("start"):
                 first_alert["review_period"]["start"] = activity_summary["start_date"] # Align
                 self.warnings.append("First alert's review_period start date missing. Aligned with activity_summary.")
             if not first_alert["review_period"].get("end"):
                 first_alert["review_period"]["end"] = activity_summary["end_date"] # Align
                 self.warnings.append("First alert's review_period end date missing. Aligned with activity_summary.")
-        
+
         return combined_data
-        
+
         # Start with case data
         combined_data = {
             "case_number": self.case_data.get("case_number", ""),

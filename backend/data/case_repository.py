@@ -372,7 +372,7 @@ def get_case(case_number: str) -> Optional[Dict[str, Any]]:
                             else:
                                 account_data["related_parties"].append({"name": party_str, "role": ""}) # Fallback.
                     # Placeholder for potential credit/debit summary within account item (if format changes).
-                    if "Credits" in account_item: account_data["credits"] = {} 
+                    if "Credits" in account_item: account_data["credits"] = {}
                     if "Debits" in account_item: account_data["debits"] = {}
                     flattened_data["accounts"].append(account_data)
                 
@@ -503,12 +503,12 @@ def get_available_cases() -> List[Dict[str, Any]]:
         }
         
         # --- Extract information from different sections of the case ---
-        
+
         # First pass: Extract 'Relevant Accounts' from "Case Information" as primary source for account_number.
         # Also extract subject names from "Customer Information" and alert count from "Alerting Details".
         for section in case_sections:
             section_name = section.get("section", "")
-            
+
             if section_name == "Case Information":
                 relevant_accounts = section.get("Relevant Accounts", [])
                 if relevant_accounts and isinstance(relevant_accounts, list):
@@ -519,7 +519,7 @@ def get_available_cases() -> List[Dict[str, Any]]:
                 # Attempt to get subjects from "US Bank Customer Information" list.
                 if "US Bank Customer Information" in section:
                     summary["subjects"] = [
-                        customer.get("Primary Party", "") 
+                        customer.get("Primary Party", "")
                         for customer in section["US Bank Customer Information"]
                         if "Primary Party" in customer and customer.get("Primary Party")
                     ]
@@ -545,12 +545,12 @@ def get_available_cases() -> List[Dict[str, Any]]:
                     if accounts_list and isinstance(accounts_list, list) and accounts_list[0].get("Account Key"):
                         summary["account_number"] = str(accounts_list[0]["Account Key"])
                         logger.debug(f"Extracted account_number '{summary['account_number']}' from 'Account Key' (Accounts list) for case {case_number}.")
-                        break 
+                        break
                     # Try "accountInformation.Account" structure.
                     elif "accountInformation" in section and section["accountInformation"].get("Account", {}).get("Account Key"):
                         summary["account_number"] = str(section["accountInformation"]["Account"]["Account Key"])
                         logger.debug(f"Extracted account_number '{summary['account_number']}' from 'Account Key' (accountInformation) for case {case_number}.")
-                        break 
+                        break
         
         # Second fallback for 'account_number': Try "Activity Summary" section.
         if not summary["account_number"]:
@@ -562,7 +562,7 @@ def get_available_cases() -> List[Dict[str, Any]]:
                     if activity_summary_list and isinstance(activity_summary_list, list) and activity_summary_list[0].get("Account"):
                         summary["account_number"] = str(activity_summary_list[0]["Account"])
                         logger.debug(f"Extracted account_number '{summary['account_number']}' from 'Activity Summary' for case {case_number}.")
-                        break 
+                        break
         
         # Log a warning if no account number could be determined after all fallbacks.
         if not summary["account_number"]:

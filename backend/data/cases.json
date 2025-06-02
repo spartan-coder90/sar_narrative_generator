@@ -44,7 +44,7 @@
         "tin": "111",
         "dateOfBirth": "1970-11-12",
         "occupation": "Doctor/Dentist",
-        "employer": "SUMMIT ORTHOPEDICS",
+        "employerName": "SUMMIT ORTHOPEDICS",
         "lineOfBusiness": "WM",
         "customerSinceDate": "2021-04-25",
         "deceased": null,
@@ -77,16 +77,16 @@
         ],
         "addresses": [
           {
-            "fullAddress": "ICS: PRIMARY 857 FAIRMOUNT AVE SAINT PAUL MN SAINT PAUL, MINNESOTA, 55105-3341 UNITED STATES OF AMERICA",
-            "type": "Physical"
+            "addressType": "Physical",
+            "fullAddress": "ICS: PRIMARY 857 FAIRMOUNT AVE SAINT PAUL MN SAINT PAUL, MINNESOTA, 55105-3341 UNITED STATES OF AMERICA"
           },
           {
-            "fullAddress": "ICS: PRIMARY 857 FAIRMOUNT AVE SAINT PAUL MN SAINT PAUL, MINNESOTA, 55105-3341 UNITED STATES OF AMERICA",
-            "type": "Physical"
+            "addressType": "Physical",
+            "fullAddress": "ICS: PRIMARY 857 FAIRMOUNT AVE SAINT PAUL MN SAINT PAUL, MINNESOTA, 55105-3341 UNITED STATES OF AMERICA"
           },
           {
-            "fullAddress": "CIS: Legal, CIS: PRIMARY, CIS: CUSTOMER ADDRESS 857 FAIRMOUNT AVE SAINT PAUL, MINNESOTA, 55105-3341 UNITED STATES OF AMERICA",
-            "type": "Legal"
+            "addressType": "Legal",
+            "fullAddress": "CIS: Legal, CIS: PRIMARY, CIS: CUSTOMER ADDRESS 857 FAIRMOUNT AVE SAINT PAUL, MINNESOTA, 55105-3341 UNITED STATES OF AMERICA"
           }
         ],
         "identifications": [
@@ -126,7 +126,7 @@
         "tin": "222",
         "dateOfBirth": "1971-12-30",
         "occupation": "Other",
-        "employer": "UNEMPLOYED",
+        "employerName": "UNEMPLOYED",
         "lineOfBusiness": "PYMT",
         "customerSinceDate": "2021-04-27",
         "deceased": null,
@@ -146,8 +146,8 @@
         "otherParties": [],
         "addresses": [
           {
-            "fullAddress": "CIS: Legal, CIS: PRIMARY, CIS: CUSTOMER ADDRESS, CIS: IDENTIFICATION ADDR 857 FAIRMOUNT AVE SAINT PAUL, MINNESOTA, 55105-3341 UNITED STATES OF AMERICA",
-            "type": "Legal"
+            "addressType": "Legal",
+            "fullAddress": "CIS: Legal, CIS: PRIMARY, CIS: CUSTOMER ADDRESS, CIS: IDENTIFICATION ADDR 857 FAIRMOUNT AVE SAINT PAUL, MINNESOTA, 55105-3341 UNITED STATES OF AMERICA"
           }
         ],
         "identifications": [
@@ -179,7 +179,7 @@
         "tin": null,
         "dateOfBirth": null,
         "occupation": null,
-        "employer": null,
+        "employerName": null,
         "lineOfBusiness": null,
         "customerSinceDate": "2007-08-01",
         "deceased": null,
@@ -503,6 +503,203 @@
       "createdBy": "ercm_aml_manager",
       "evidenceId": "E_5960981",
       "timestamp": "2025-04-14T11:51:14"
+    }
+  },
+  "CC0011468289": {
+    "caseInfo": {
+      "caseNumber": "CC0011468289",
+      "rbiTier": "Gold",
+      "relevantAccountNumbers": ["9990525740", "9990525750"],
+      "reviewPeriod": {"startDate": "2021-07-01", "endDate": "2021-09-30"},
+      "isRv90Case": true,
+      "isHybridInvestigation": false
+    },
+    "alerts": [
+      {
+        "alertId": "ALERT00561951",
+        "alertMonth": "202109",
+        "alertingAccount": "9990525740",
+        "description": "Unusual International Wire Activity",
+        "reviewPeriod": {"startDate": "2021-07-01", "endDate": "2021-09-30"}
+      }
+    ],
+    "subjects": [
+      {
+        "name": "ELIZABETH A ROOSA",
+        "isPrimary": true,
+        "partyKey": "001995039788473922",
+        "dateOfBirth": "1970-01-20",
+        "occupation": "Homemaker",
+        "employerName": "N/A",
+        "countryOfCitizenship": "US",
+        "countryOfNationality": "US",
+        "addresses": [
+          {
+            "addressType": "Primary",
+            "fullAddress": "123 MAPLE ST, ANYTOWN, CA 90210",
+            "addressLine1": "123 MAPLE ST",
+            "city": "ANYTOWN",
+            "stateOrProvince": "CA",
+            "postalCode": "90210",
+            "countryCode": "US"
+          }
+        ],
+        "identifications": [
+          {
+            "idType": "Passport",
+            "idNumber": "P12345678",
+            "issuer": "US",
+            "issueDate": "2015-06-15",
+            "expirationDate": "2025-06-14"
+          }
+        ],
+        "phones": [
+          {"phoneType": "Mobile", "phoneNumber": "555-0101"}
+        ],
+        "emails": [
+          {"emailAddress": "elizabeth.roosa@example.com"}
+        ],
+        "accountRelationship": "Primary Account Holder"
+      },
+      {
+        "name": "JOHN K ROOSA",
+        "isPrimary": false,
+        "partyKey": "001995039788473923",
+        "dateOfBirth": "1968-05-15",
+        "occupation": "Engineer",
+        "employerName": "Tech Solutions Inc.",
+        "countryOfCitizenship": "US",
+        "countryOfNationality": "US",
+        "addresses": [
+           {
+            "addressType": "Primary",
+            "fullAddress": "123 MAPLE ST, ANYTOWN, CA 90210",
+            "addressLine1": "123 MAPLE ST",
+            "city": "ANYTOWN",
+            "stateOrProvince": "CA",
+            "postalCode": "90210",
+            "countryCode": "US"
+          }
+        ],
+        "identifications": [
+          {
+            "idType": "Driver's License",
+            "idNumber": "DLCA98765",
+            "issuer": "CA",
+            "issueDate": "2018-08-20",
+            "expirationDate": "2026-08-19"
+          }
+        ],
+        "phones": [
+          {"phoneType": "Mobile", "phoneNumber": "555-0102"}
+        ],
+        "emails": [
+          {"emailAddress": "john.roosa@example.com"}
+        ],
+        "accountRelationship": "Joint Account Holder"
+      }
+    ],
+    "accounts": [
+      {
+        "accountKey": "9990525740",
+        "accountTypes": ["Checking", "Savings"],
+        "accountTitle": "ELIZABETH A ROOSA AND JOHN K ROOSA JT WROS",
+        "openingDate": "2010-03-15",
+        "closingDate": null,
+        "statusDescription": "Active",
+        "holdingBranch": "Main Street Branch",
+        "relatedParties": [
+          {"name": "ELIZABETH A ROOSA", "role": "Owner"},
+          {"name": "JOHN K ROOSA", "role": "Owner"}
+        ],
+        "activitySummary": {
+          "creditsByType": [
+            {
+              "type": "International Wire",
+              "percentOfTotal": 75.0,
+              "totalAmount": 150000.00,
+              "transactionCount": 3,
+              "minTransactionAmount": 45000.00,
+              "maxTransactionAmount": 55000.00,
+              "minTransactionDate": "2021-07-10",
+              "maxTransactionDate": "2021-09-05"
+            },
+            {
+              "type": "Domestic Wire",
+              "percentOfTotal": 25.0,
+              "totalAmount": 50000.00,
+              "transactionCount": 2,
+              "minTransactionAmount": 20000.00,
+              "maxTransactionAmount": 30000.00,
+              "minTransactionDate": "2021-08-01",
+              "maxTransactionDate": "2021-08-20"
+            }
+          ],
+          "debitsByType": [
+            {
+              "type": "International Wire",
+              "percentOfTotal": 80.0,
+              "totalAmount": 120000.00,
+              "transactionCount": 2,
+              "minTransactionAmount": 50000.00,
+              "maxTransactionAmount": 70000.00,
+              "minTransactionDate": "2021-07-15",
+              "maxTransactionDate": "2021-09-10"
+            },
+            {
+              "type": "Cash Withdrawal",
+              "percentOfTotal": 20.0,
+              "totalAmount": 30000.00,
+              "transactionCount": 5,
+              "minTransactionAmount": 5000.00,
+              "maxTransactionAmount": 8000.00,
+              "minTransactionDate": "2021-07-05",
+              "maxTransactionDate": "2021-09-25"
+            }
+          ]
+        }
+      }
+    ],
+    "transactions": {
+      "all": [
+        {"transactionId": "T1001", "accountKey": "9990525740", "date": "2021-07-10", "type": "Credit", "amount": 50000.00, "transactionType": "International Wire", "description": "Incoming wire from Foreign Bank A", "senderName": "Foreign Entity X", "receiverName": "ELIZABETH A ROOSA"},
+        {"transactionId": "T1002", "accountKey": "9990525740", "date": "2021-07-15", "type": "Debit", "amount": 70000.00, "transactionType": "International Wire", "description": "Outgoing wire to Foreign Bank B", "senderName": "ELIZABETH A ROOSA", "receiverName": "Foreign Entity Y"},
+        {"transactionId": "T1003", "accountKey": "9990525740", "date": "2021-08-01", "type": "Credit", "amount": 20000.00, "transactionType": "Domestic Wire", "description": "Incoming wire from US Bank C", "senderName": "US Company Z", "receiverName": "ELIZABETH A ROOSA"}
+      ],
+      "unusualActivitySample": [
+        {"transactionId": "T1001", "accountKey": "9990525740", "date": "2021-07-10", "type": "Credit", "amount": 50000.00, "transactionType": "International Wire", "description": "Incoming wire from Foreign Bank A", "senderName": "Foreign Entity X", "receiverName": "ELIZABETH A ROOSA"},
+        {"transactionId": "T1002", "accountKey": "9990525740", "date": "2021-07-15", "type": "Debit", "amount": 70000.00, "transactionType": "International Wire", "description": "Outgoing wire to Foreign Bank B", "senderName": "ELIZABETH A ROOSA", "receiverName": "Foreign Entity Y"}
+      ],
+      "ctaSample": [],
+      "bipSample": []
+    },
+    "priorSars": [
+      {
+        "caseNumber": "SAR000123",
+        "filingDate": "2020-01-15",
+        "summary": "Previous suspicious wire activity to high-risk jurisdictions.",
+        "amountReported": 75000.00,
+        "formNumber": "FinCEN SAR Form 111"
+      }
+    ],
+    "databaseSearches": {
+      "kycDatabase": [
+        {"subjectName": "ELIZABETH A ROOSA", "partyKey": "001995039788473922", "webKycFormLink": "http://kyc.example.com/001995039788473922"}
+      ],
+      "riskRatings": [
+        {"subjectName": "ELIZABETH A ROOSA", "partyKey": "001995039788473922", "partyRiskRating": "High"}
+      ],
+      "adverseMediaReview": "Adverse media found related to associate of John K Roosa regarding unregulated financial schemes.",
+      "hoganSearch": [
+          {"subjectName": "ELIZABETH A ROOSA", "partyKey": "001995039788473922", "searchDate": "2021-09-01", "resultsSummary": "No significant findings in Hogan."},
+          {"subjectName": "JOHN K ROOSA", "partyKey": "001995039788473923", "searchDate": "2021-09-01", "resultsSummary": "Possible link to individual mentioned in adverse media."}
+      ]
+    },
+    "recommendationsPlaceholder": {
+      "narrative": "A SAR is recommended due to unusual international wire transfers inconsistent with the customer's stated occupation and expected activity. The volume and destinations of wires warrant further investigation.",
+      "activityType": "Unusual International Wire Activity",
+      "retentionRecommendation": "Further Monitoring",
+      "closureRecommendation": "No Closure Recommended at this time"
     }
   }
 }

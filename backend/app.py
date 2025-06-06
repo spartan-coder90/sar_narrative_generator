@@ -151,7 +151,7 @@ def get_available_case_list():
 def generate_from_case():
     """
     Processes a selected case by its case number to generate a SAR narrative and recommendation.
-
+    
     Request JSON Body:
     - `case_number` (str): The unique identifier for the case to process.
     - `model` (str, optional): The identifier for the LLM model to be used for generation
@@ -200,17 +200,15 @@ def generate_from_case():
         case_data = get_case(case_number)
         full_case_data = get_full_case(case_number)
         
-        if not case_data: # case_data from get_case() is the new standardized dict
+        if not case_data:
             return jsonify({
                 "status": "error",
                 "message": f"Case number {case_number} not found"
             }), 404
             
-        # The 'case_data' is already the full standardized data.
-        # The 'full_case_data' from get_full_case() is the same object or equivalent.
-        # No need to add a "full_data" key to case_data.
-        # If any downstream code expected case_data["full_data"] to be the old list-of-sections,
-        # that code needs to be updated. For now, we assume case_data itself is what's needed.
+        # Add full case data to the case_data response if available
+        if full_case_data:
+            case_data["full_data"] = full_case_data
             
     except Exception as e:
         logger.error(f"Error retrieving case data: {str(e)}")
@@ -325,18 +323,17 @@ def generate_from_case():
         }
         
         # Include case and excel data for complete context
-        response["case_data"] = case_data # case_data is the new standardized dict
+        response["case_data"] = case_data
         response["excel_data"] = excel_data
         response["combined_data"] = combined_data
         response["transaction_data"] = transaction_data
         
         # Extract prior cases for future reference
-        # extract_prior_cases_summary will be refactored to accept the new case_data structure
-        response["prior_cases"] = extract_prior_cases_summary(case_data) if case_data else []
+        response["prior_cases"] = extract_prior_cases_summary(full_case_data) if full_case_data else []
         
         # Save a copy of the processed data for later use
         save_to_json_file({
-            "case_data": case_data, # Save the new standardized case_data
+            "case_data": case_data,
             "excel_data": excel_data,
             "combined_data": combined_data,
             "transaction_data": transaction_data,
@@ -448,29 +445,43 @@ def get_correct_account_number(case_data):
     Returns:
         str: The extracted account number, or "Unknown" if not found.
     """
-    account_number_str = "" # Use a different variable name to avoid confusion with parameter
+    account_number = ""
     
-    # Priority 1: From case_data.caseInfo.relevantAccountNumbers
-    case_info = case_data.get("caseInfo", {})
-    relevant_accounts = case_info.get("relevantAccountNumbers", [])
-    if relevant_accounts and isinstance(relevant_accounts, list) and relevant_accounts[0]:
-        account_number_str = str(relevant_accounts[0])
-        logger.debug(f"Using account number '{account_number_str}' from caseInfo.relevantAccountNumbers.")
-        return account_number_str
-
-    # Priority 2: From the first account in case_data.accounts
-    accounts_list = case_data.get("accounts", [])
-    if accounts_list and isinstance(accounts_list, list) and accounts_list[0]:
-        first_account = accounts_list[0]
-        if isinstance(first_account, dict) and first_account.get("accountKey"):
-            account_number_str = str(first_account.get("accountKey"))
-            logger.debug(f"Using account number '{account_number_str}' from the first account's accountKey in case_data.accounts.")
-            return account_number_str
-
-    # Fallback: If no account number is found
-    case_id_for_log = case_data.get("caseInfo", {}).get("caseNumber", "unknown") # More robust way to get case number for logging
-    logger.warning(f"Could not determine account number for case '{case_id_for_log}'. Defaulting to 'Unknown'.")
-    return "Unknown"
+    # Priority 1: Extract from "Relevant Accounts" in the "Case Information" section of `full_data`.
+    # `full_data` holds the original, non-flattened list of case sections.
+    if case_data.get("full_data") and isinstance(case_data["full_data"], list):
+        for section in case_data["full_data"]:
+            if isinstance(section, dict) and section.get("section") == "Case Information":
+                relevant_accounts = section.get("Relevant Accounts")
+                if relevant_accounts and isinstance(relevant_accounts, list) and len(relevant_accounts) > 0:
+                    account_number = str(relevant_accounts[0]) # Use the first relevant account.
+                    logger.debug(f"Using account number '{account_number}' from 'Relevant Accounts'.")
+                    break # Found, no need to check other sections for this source.
+    
+    # Priority 2: Extract from `case_data.account_info.account_number`.
+    # `account_info` in the flattened structure usually stores the primary account details.
+    if not account_number: # If not found in Priority 1
+        account_info_dict = case_data.get("account_info")
+        if isinstance(account_info_dict, dict) and account_info_dict.get("account_number"):
+            account_number = str(account_info_dict["account_number"])
+            logger.debug(f"Using account number '{account_number}' from 'case_data.account_info'.")
+    
+    # Priority 3: Extract from the first element of `case_data.accounts` list.
+    # The `accounts` list in the flattened structure contains all accounts associated with the case.
+    if not account_number: # If not found in Priority 1 or 2
+        accounts_list = case_data.get("accounts")
+        if isinstance(accounts_list, list) and len(accounts_list) > 0:
+            first_account_dict = accounts_list[0]
+            if isinstance(first_account_dict, dict) and first_account_dict.get("account_number"):
+                account_number = str(first_account_dict["account_number"])
+                logger.debug(f"Using account number '{account_number}' from the first item in 'case_data.accounts' list.")
+    
+    # Fallback: If no account number is found after checking all prioritized locations.
+    if not account_number:
+        logger.warning(f"Could not determine account number for case '{case_data.get('case_number', 'unknown')}'. Defaulting to 'Unknown'.")
+        account_number = "Unknown" # Default value.
+    
+    return account_number
 
 @app.route('/api/alerting-activity/<session_id>', methods=['GET'])
 def get_alerting_activity(session_id: str):
@@ -515,25 +526,19 @@ def get_alerting_activity(session_id: str):
              return jsonify({"status": "error", "message": "Session data is unexpectedly empty."}), 500
 
             
-        case_data = data.get("case_data", {}) # This is the new standardized case_data structure
+        case_data = data.get("case_data", {})
         
-        # extract_alerting_activity_summary will be refactored to accept the new case_data structure.
-        # No need for a separate "full_case_data" in the old list-of-sections format.
-        # If case_data from session is minimal, get_full_case would fetch the complete new structure.
-        # For now, assume case_data in session is the complete new structure.
+        # Get the original full case data to extract alerts properly
+        full_case_data = case_data.get("full_data", [])
+        if not full_case_data and case_data.get("case_number"):
+            # Try to fetch from repository if not in the data
+            full_case_data = get_full_case(case_data.get("case_number"))
         
-        retrieved_case_data_for_alerts = case_data
-        # If case_data in session might be stale or incomplete for this specific task,
-        # one might consider re-fetching it:
-        # if case_data.get("caseNumber"): # Check if there's a case number to fetch
-        #     fetched_new_case_data = get_full_case(case_data.get("caseNumber"))
-        #     if fetched_new_case_data:
-        #          retrieved_case_data_for_alerts = fetched_new_case_data
-
-        alerting_activity_summary = extract_alerting_activity_summary(retrieved_case_data_for_alerts)
-
-        if not alerting_activity_summary: # Check if extractor returned empty or default
-            # Create a default structure if extractor failed or returned minimal
+        # Extract alerting activity summary from the case data
+        if full_case_data:
+            alerting_activity_summary = extract_alerting_activity_summary(full_case_data)
+        else:
+            # Create a default structure if case data not available
             alerting_activity_summary = {
                 "alertInfo": {
                     "caseNumber": case_data.get("case_number", ""),
@@ -942,16 +947,23 @@ def get_prior_cases_summary(session_id):
              return jsonify({"status": "error", "message": "Session data is unexpectedly empty."}), 500
         
         # Try to get prior cases from session data
-        prior_cases = data.get("prior_cases", []) # This should have been populated by generate_from_case correctly
+        prior_cases = data.get("prior_cases", [])
         
-        # If no prior cases in session, try to extract them from case_data (which is new structure)
-        # This logic might be redundant if generate_from_case always populates it.
+        # If no prior cases, try to extract them from case data
         if not prior_cases and "case_data" in data:
-            current_case_data = data["case_data"] # New standardized structure
-            # extract_prior_cases_summary will be refactored for new structure
-            prior_cases = extract_prior_cases_summary(current_case_data)
+            case_data = data["case_data"]
+            case_number = case_data.get("case_number", "")
+            full_data = case_data.get("full_data", [])
             
-            # Save prior cases back to session data if freshly extracted
+            if full_data:
+                prior_cases = extract_prior_cases_summary(full_data)
+            elif case_number:
+                # Try to retrieve from repository
+                full_case_data = get_full_case(case_number)
+                if full_case_data:
+                    prior_cases = extract_prior_cases_summary(full_case_data)
+            
+            # Save prior cases in session data
             data["prior_cases"] = prior_cases
             save_to_json_file(data, data_path)
         

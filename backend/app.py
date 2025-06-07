@@ -8,7 +8,7 @@ import re
 import json
 import tempfile
 from datetime import datetime
-# from werkzeug.utils import secure_filename # Unused import
+
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from typing import Optional, Dict, Any, Tuple # Added missing typing imports
@@ -43,7 +43,6 @@ app = Flask(__name__)
 # Populate Flask app configuration directly from the project's `config` module.
 # This allows centralized management of settings like upload directories, debug modes, etc.
 app.config['UPLOAD_FOLDER'] = config.UPLOAD_DIR
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload limit for files.
 app.config['SECRET_KEY'] = os.urandom(24)  # Secure random key for session management and other security features.
 
 # Set Flask's DEBUG mode based on API_DEBUG from the config module, defaulting to False if not set.
@@ -601,6 +600,7 @@ def get_alerting_activity(session_id: str):
                     data["recommendation"] = {}
                 
                 data["recommendation"]["alerting_activity"] = generated_summary
+                data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
                 save_to_json_file(data, data_path)
             except Exception as e:
                 logger.error(f"Error generating alerting activity summary: {str(e)}", exc_info=True)
@@ -761,6 +761,7 @@ def regenerate_section(session_id, section_id):
             }
         
         # Save updated data
+        data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
         save_to_json_file(data, data_path)
         
         return jsonify({
@@ -826,6 +827,7 @@ def update_section(session_id, section_id):
         data["narrative"] = narrative
         
         # Save updated data
+        data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
         save_to_json_file(data, data_path)
         
         return jsonify({
@@ -887,6 +889,7 @@ def update_recommendation_section(session_id, section_id):
         data["recommendation"][section_id] = content
         
         # Save updated data
+        data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
         save_to_json_file(data, data_path)
         
         return jsonify({
@@ -965,6 +968,7 @@ def get_prior_cases_summary(session_id):
             
             # Save prior cases in session data
             data["prior_cases"] = prior_cases
+            data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
             save_to_json_file(data, data_path)
         
         # Generate prompt for LLM
@@ -988,6 +992,7 @@ def get_prior_cases_summary(session_id):
                 data["recommendation"] = {}
             
             data["recommendation"]["prior_sars"] = generated_summary
+            data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
             save_to_json_file(data, data_path)
         
         return jsonify({
@@ -1064,6 +1069,7 @@ def regenerate_prior_cases(session_id):
             data["recommendation"] = {}
         
         data["recommendation"]["prior_sars"] = generated_summary
+        data_path = os.path.join(app.config['UPLOAD_FOLDER'], session_id, 'data.json')
         save_to_json_file(data, data_path)
         
         return jsonify({
